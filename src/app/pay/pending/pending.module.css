@@ -1,0 +1,65 @@
+.container {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  padding: var(--space-md);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-lg);
+  max-width: 400px;
+  width: 100%;
+}
+
+.title {
+  font-size: var(--t-title2);
+  font-weight: 700;
+  text-align: center;
+  margin: 0;
+}
+
+.description {
+  font-size: var(--t-body);
+  color: var(--text-secondary);
+  text-align: center;
+  margin: 0;
+}
+
+.card {
+  width: 100%;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.detailRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: var(--space-md);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.detailRow:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.detailLabel {
+  font-size: var(--t-footnote);
+  color: var(--text-secondary);
+}
+
+.detailValue {
+  font-size: var(--t-body);
+  font-weight: 600;
+}

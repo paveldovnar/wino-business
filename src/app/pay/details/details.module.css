@@ -1,0 +1,141 @@
+.container {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.backButton {
+  background: none;
+  border: none;
+  padding: var(--space-sm);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: background 0.2s;
+}
+
+.backButton:hover {
+  background: var(--bg-secondary);
+}
+
+.title {
+  font-size: var(--t-title2);
+  font-weight: 700;
+  margin: 0;
+}
+
+.content {
+  flex: 1;
+  padding: var(--space-lg) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.amountCard {
+  background: linear-gradient(135deg, var(--accent) 0%, #5BA3F5 100%);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+  color: white;
+  text-align: center;
+}
+
+.amountLabel {
+  font-size: var(--t-footnote);
+  opacity: 0.9;
+  margin-bottom: var(--space-sm);
+}
+
+.amount {
+  font-size: var(--t-xxl);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.detailsCard {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.cardTitle {
+  font-size: var(--t-headline);
+  font-weight: 600;
+  margin: 0;
+}
+
+.merchant {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.merchantIcon {
+  width: 56px;
+  height: 56px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.merchantInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.merchantName {
+  font-size: var(--t-body);
+  font-weight: 600;
+  margin-bottom: var(--space-xs);
+}
+
+.merchantAddress {
+  font-size: var(--t-footnote);
+  color: var(--text-secondary);
+  font-family: monospace;
+}
+
+.divider {
+  height: 1px;
+  background: var(--border-color);
+}
+
+.detailRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.detailLabel {
+  font-size: var(--t-footnote);
+  color: var(--text-secondary);
+}
+
+.detailValue {
+  font-size: var(--t-footnote);
+  font-weight: 600;
+}
+
+.actions {
+  padding: var(--space-md);
+  border-top: 1px solid var(--border-color);
+}

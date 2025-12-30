@@ -1,0 +1,131 @@
+.container {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.backButton {
+  background: none;
+  border: none;
+  padding: var(--space-sm);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: background 0.2s;
+}
+
+.backButton:hover {
+  background: var(--bg-secondary);
+}
+
+.title {
+  font-size: var(--t-title2);
+  font-weight: 700;
+  margin: 0;
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-xl) var(--space-md);
+  gap: var(--space-xl);
+}
+
+.amountDisplay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-2xl) var(--space-md);
+}
+
+.currency {
+  font-size: var(--t-footnote);
+  color: var(--text-tertiary);
+  font-weight: 600;
+}
+
+.amount {
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-primary);
+}
+
+.customAmountInfo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2xl) var(--space-md);
+  min-height: 160px;
+}
+
+.customAmountText {
+  font-size: var(--t-body);
+  color: var(--text-secondary);
+  text-align: center;
+  max-width: 280px;
+  margin: 0;
+}
+
+.customToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+.toggleLabel {
+  font-size: var(--t-body);
+  font-weight: 500;
+}
+
+.numpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-sm);
+  margin-top: auto;
+}
+
+.numpadButton {
+  aspect-ratio: 1;
+  background: var(--bg-secondary);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--t-title2);
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.numpadButton:active {
+  background: var(--bg-tertiary);
+  transform: scale(0.95);
+}
+
+.numpadBackspace {
+  color: var(--error);
+}
+
+.actions {
+  padding: var(--space-md);
+  border-top: 1px solid var(--border-color);
+}

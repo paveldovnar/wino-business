@@ -1,0 +1,32 @@
+.container {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-md);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-lg);
+  text-align: center;
+}
+
+.spinner {
+  color: white;
+}
+
+.title {
+  font-size: var(--t-title2);
+  font-weight: 700;
+  color: white;
+  margin: 0;
+}
+
+.description {
+  color: rgba(255, 255, 255, 0.9);
+  margin: 0;
+}

@@ -1,0 +1,139 @@
+.container {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.backButton {
+  background: none;
+  border: none;
+  padding: var(--space-sm);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: background 0.2s;
+}
+
+.backButton:hover {
+  background: var(--bg-secondary);
+}
+
+.title {
+  font-size: var(--t-title2);
+  font-weight: 700;
+  margin: 0;
+}
+
+.content {
+  flex: 1;
+  padding: var(--space-xl) var(--space-md);
+}
+
+.step {
+  font-size: var(--t-caption);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--space-md);
+}
+
+.heading {
+  font-size: var(--t-title1);
+  font-weight: 700;
+  margin: 0 0 var(--space-xl) 0;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.input {
+  width: 100%;
+}
+
+.logoSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.logoLabel {
+  font-size: var(--t-footnote);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.logoUpload {
+  width: 100%;
+}
+
+.uploadArea {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2xl);
+  border: 2px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.uploadArea:hover {
+  border-color: var(--accent);
+  background: var(--bg-secondary);
+}
+
+.fileInput {
+  display: none;
+}
+
+.uploadContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-secondary);
+}
+
+.logoPreview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.logoImage {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
+
+.logoRemove {
+  background: none;
+  border: none;
+  color: var(--error);
+  font-size: var(--t-footnote);
+  padding: var(--space-sm);
+}
+
+.actions {
+  padding: var(--space-md);
+  border-top: 1px solid var(--border-color);
+}
