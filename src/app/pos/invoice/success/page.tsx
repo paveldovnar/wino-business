@@ -4,8 +4,6 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@telegram-apps/telegram-ui';
 import { CheckCircle2 } from 'lucide-react';
-import { saveTransaction } from '@/lib/storage';
-import { Transaction } from '@/types';
 import styles from './success.module.css';
 
 export default function InvoiceSuccessPage() {
@@ -24,18 +22,8 @@ export default function InvoiceSuccessPage() {
     const amountValue = amt === 'custom' ? '100.00' : parseFloat(amt).toFixed(2);
     setAmount(amountValue);
 
-    const transaction: Transaction = {
-      id: crypto.randomUUID(),
-      signature: sig,
-      amount: parseFloat(amountValue),
-      from: fromAddr,
-      to: 'merchant-wallet',
-      status: 'success',
-      timestamp: new Date(),
-      type: 'invoice',
-    };
-
-    saveTransaction(transaction);
+    // Transaction was already saved as pending and updated to success by the pending page
+    // No need to save again here to avoid duplicates
   }, []);
 
   const handleClose = () => {

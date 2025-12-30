@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@telegram-apps/telegram-ui';
 import { Building2, TrendingUp, DollarSign, Activity } from 'lucide-react';
-import { getBusiness, getTransactions } from '@/lib/storage';
+import { getBusiness, getTransactions, getPendingTransactions, updateTransactionStatus } from '@/lib/storage';
+import { trackTransaction } from '@/lib/tx-status';
 import { Business, Transaction } from '@/types';
 import styles from './dashboard.module.css';
 
@@ -23,12 +24,46 @@ export default function DashboardPage() {
 
     setBusiness(businessData);
 
-    const txs = getTransactions();
-    setTransactions(txs);
+    const loadTransactions = () => {
+      const txs = getTransactions();
+      setTransactions(txs);
 
-    const successfulTxs = txs.filter(tx => tx.status === 'success');
-    const totalBalance = successfulTxs.reduce((sum, tx) => sum + tx.amount, 0);
-    setBalance(totalBalance);
+      const successfulTxs = txs.filter(tx => tx.status === 'success');
+      const totalBalance = successfulTxs.reduce((sum, tx) => sum + tx.amount, 0);
+      setBalance(totalBalance);
+    };
+
+    loadTransactions();
+
+    // Restore tracking for any pending transactions
+    // This ensures that if the user refreshed the page or reopened the app,
+    // pending transactions will continue to be tracked
+    const pendingTxs = getPendingTransactions();
+    const cleanupFunctions: (() => void)[] = [];
+
+    pendingTxs.forEach(tx => {
+      console.log(`[dashboard] Restoring tracking for pending tx: ${tx.signature.slice(0, 8)}...`);
+
+      const cleanup = trackTransaction(tx.signature, {
+        onConfirmed: () => {
+          console.log(`[dashboard] Transaction confirmed: ${tx.signature.slice(0, 8)}...`);
+          updateTransactionStatus(tx.signature, 'success');
+          loadTransactions(); // Reload to update UI
+        },
+        onFailed: (error) => {
+          console.error(`[dashboard] Transaction failed: ${tx.signature.slice(0, 8)}...`, error);
+          updateTransactionStatus(tx.signature, 'failed');
+          loadTransactions(); // Reload to update UI
+        },
+      });
+
+      cleanupFunctions.push(cleanup);
+    });
+
+    // Cleanup all tracking subscriptions when component unmounts
+    return () => {
+      cleanupFunctions.forEach(cleanup => cleanup());
+    };
   }, [router]);
 
   if (!business) {
@@ -109,16 +144,6 @@ export default function DashboardPage() {
             className={styles.primaryButton}
           >
             Open POS mode
-          </Button>
-
-          <Button
-            size="l"
-            stretched
-            mode="outline"
-            onClick={() => router.push('/pay/scan')}
-            className={styles.secondaryButton}
-          >
-            Pay
           </Button>
         </div>
       </div>

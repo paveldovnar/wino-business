@@ -15,7 +15,7 @@ export interface Transaction {
   to: string;
   status: 'pending' | 'success' | 'failed';
   timestamp: Date;
-  type: 'invoice' | 'payment';
+  type: 'invoice'; // Merchant app is RECEIVE-ONLY, all transactions are incoming invoices
 }
 
 export interface Invoice {
@@ -23,11 +23,13 @@ export interface Invoice {
   amount: number | null;
   allowCustomAmount: boolean;
   recipient: string;
-  qrCode: string;
+  reference: string; // Solana Pay reference public key (base58) for safe payment matching
+  qrCode: string; // Solana Pay URI (solana:...)
   status: 'pending' | 'success' | 'declined';
   signature?: string;
   createdAt: Date;
-  from?: string;
+  expiresAt: Date;
+  from?: string; // Payer address when payment is detected
 }
 
 export type TransactionStatus = 'pending' | 'success' | 'failed' | 'declined';
