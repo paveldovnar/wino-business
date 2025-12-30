@@ -31,8 +31,20 @@ export default function PayDetailsPage() {
     setInvoiceId(id);
   }, [router]);
 
-  const handlePay = () => {
+  const handlePay = async () => {
     setLoading(true);
+
+    // TODO: Implement real payment transaction here
+    // Steps for future implementation:
+    // 1. Create a Solana transfer transaction (using @solana/web3.js)
+    // 2. Set recipient (merchant's public key from QR code)
+    // 3. Set amount (in lamports, convert from USD amount)
+    // 4. Sign transaction using wallet.signTransaction() from useWallet()
+    // 5. Send transaction to Solana mainnet-beta
+    // 6. Store the real transaction signature
+    // 7. Navigate to pending page to wait for confirmation
+    //
+    // For now, using a mock signature for testing the flow
 
     const mockSignature = Keypair.generate().publicKey.toBase58();
     sessionStorage.setItem('pay_signature', mockSignature);

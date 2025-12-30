@@ -2,36 +2,47 @@
 
 import { useRouter } from 'next/navigation';
 import { useWallet } from '@/lib/wallet-mock';
-import { Button, Input } from '@telegram-apps/telegram-ui';
+import { Button } from '@telegram-apps/telegram-ui';
 import { Wallet, ArrowLeft } from 'lucide-react';
-import { useState } from 'react';
 import styles from './connect-wallet.module.css';
 
 export default function ConnectWalletPage() {
   const router = useRouter();
-  const { select, connect } = useWallet();
-  const [seedPhrase, setSeedPhrase] = useState('');
+  const { connect, connected, connecting, select, wallets } = useWallet();
 
-  const handlePaste = async () => {
+  const handleConnectWallet = async () => {
     try {
-      const text = await navigator.clipboard.readText();
-      setSeedPhrase(text);
-    } catch (err) {
-      console.error('Failed to read clipboard:', err);
-    }
-  };
+      // Debug: Log available wallet adapters
+      console.log('Available wallets:', wallets.map(w => w.adapter.name));
 
-  const handleContinue = () => {
-    router.push('/importing');
-  };
+      // Find WalletConnect adapter
+      const walletConnectWallet = wallets.find(
+        wallet => wallet.adapter.name === 'WalletConnect'
+      );
 
-  const handleConnectPhantom = async () => {
-    select('Phantom');
-    try {
+      if (!walletConnectWallet) {
+        console.error('WalletConnect adapter not found. Available wallets:', wallets.map(w => w.adapter.name));
+        return;
+      }
+
+      // IMPORTANT: Must call select() before connect() in wallet-adapter
+      // This tells the adapter which wallet to use
+      console.log('Selecting WalletConnect adapter...');
+      select(walletConnectWallet.adapter.name);
+
+      // Now connect - this will open the WalletConnect QR modal
+      console.log('Calling connect...');
       await connect();
+
+      // On successful connection, navigate to business identity flow
+      // Note: Future NFT minting will happen after business identity is created
+      // The minting transaction will use wallet.signTransaction() to sign the mint transaction
+      console.log('Wallet connected successfully');
       router.push('/business-identity/name');
     } catch (err) {
-      console.error('Failed to connect:', err);
+      // User cancelled connection or error occurred
+      // Stay on this screen and log error
+      console.error('Wallet connection failed:', err);
     }
   };
 
@@ -55,46 +66,19 @@ export default function ConnectWalletPage() {
 
         <div className={styles.methods}>
           <div className={styles.method}>
-            <h3 className={styles.methodTitle}>Wallet app</h3>
+            <h3 className={styles.methodTitle}>WalletConnect</h3>
             <Button
               size="l"
               stretched
-              onClick={handleConnectPhantom}
+              onClick={handleConnectWallet}
+              disabled={connecting || connected}
               className={styles.methodButton}
             >
-              Connect Phantom
+              {connecting ? 'Connecting...' : connected ? 'Connected' : 'Connect Wallet'}
             </Button>
-          </div>
-
-          <div className={styles.divider}>
-            <span>OR</span>
-          </div>
-
-          <div className={styles.method}>
-            <h3 className={styles.methodTitle}>Recovery phrase</h3>
-            <Input
-              header="Seed phrase"
-              placeholder="Enter your recovery phrase"
-              value={seedPhrase}
-              onChange={(e) => setSeedPhrase(e.target.value)}
-              className={styles.input}
-            />
-            <div className={styles.inputActions}>
-              <Button
-                size="m"
-                mode="outline"
-                onClick={handlePaste}
-              >
-                Paste
-              </Button>
-              <Button
-                size="m"
-                disabled={!seedPhrase}
-                onClick={handleContinue}
-              >
-                Continue
-              </Button>
-            </div>
+            <p style={{ marginTop: '12px', fontSize: '14px', color: 'var(--tgui--secondary_hint_color)', textAlign: 'center' }}>
+              Scan QR code with your Solana mobile wallet
+            </p>
           </div>
         </div>
       </div>

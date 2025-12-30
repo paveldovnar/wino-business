@@ -1,41 +1,25 @@
-import { createContext, useContext } from 'react';
-import { PublicKey, Keypair } from '@solana/web3.js';
+// This file now exports real wallet functionality from @solana/wallet-adapter-react
+// Keeping the filename for backwards compatibility with existing imports
 
-export interface WalletContextState {
-  publicKey: PublicKey | null;
-  connected: boolean;
-  connecting: boolean;
-  disconnecting: boolean;
-  select: (walletName: string) => void;
-  connect: () => Promise<void>;
-  disconnect: () => Promise<void>;
-  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
-  signTransaction?: (transaction: any) => Promise<any>;
-  signAllTransactions?: (transactions: any[]) => Promise<any[]>;
-}
+export {
+  useWallet,
+  useConnection,
+  type WalletContextState,
+  type ConnectionContextState,
+} from '@solana/wallet-adapter-react';
 
-export const WalletContext = createContext<WalletContextState>({
-  publicKey: null,
-  connected: false,
-  connecting: false,
-  disconnecting: false,
-  select: () => {},
-  connect: async () => {},
-  disconnect: async () => {},
-});
-
-export function useWallet(): WalletContextState {
-  return useContext(WalletContext);
-}
-
-export interface ConnectionContextState {
-  connection: any;
-}
-
-export const ConnectionContext = createContext<ConnectionContextState>({
-  connection: null,
-});
-
-export function useConnection(): ConnectionContextState {
-  return useContext(ConnectionContext);
-}
+// Note: The WalletContext and ConnectionContext are now provided by @solana/wallet-adapter-react
+// They are wrapped in our WalletProvider component located at:
+// src/components/providers/WalletProvider.tsx
+//
+// Real wallet connection flow:
+// 1. User clicks connect button
+// 2. WalletConnect modal opens
+// 3. User scans QR code with mobile wallet (Phantom, Solflare, etc.)
+// 4. Wallet approves connection
+// 5. publicKey is available via useWallet().publicKey
+//
+// Future integration points:
+// - signTransaction: Will be used when minting the business identity NFT
+// - signMessage: Can be used for authentication/verification
+// - signAllTransactions: For batched operations if needed

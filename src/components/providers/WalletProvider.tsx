@@ -1,56 +1,41 @@
 'use client';
 
-import { ReactNode, useState, useMemo } from 'react';
-import { Connection, clusterApiUrl, Keypair, PublicKey } from '@solana/web3.js';
-import { WalletContext, ConnectionContext, WalletContextState } from '@/lib/wallet-mock';
-import { getSolanaConnection } from '@/lib/solana';
+import { ReactNode, useMemo } from 'react';
+import { ConnectionProvider, WalletProvider as SolanaWalletProvider } from '@solana/wallet-adapter-react';
+import { WalletConnectWalletAdapter } from '@solana/wallet-adapter-walletconnect';
+import { clusterApiUrl } from '@solana/web3.js';
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [publicKey, setPublicKey] = useState<PublicKey | null>(null);
-  const [connected, setConnected] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [disconnecting, setDisconnecting] = useState(false);
+  // Use mainnet-beta as specified in requirements
+  const endpoint = useMemo(() => {
+    const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
+    return rpcUrl || clusterApiUrl('mainnet-beta');
+  }, []);
 
-  const connection = useMemo(() => getSolanaConnection(), []);
-
-  const select = (walletName: string) => {
-    console.log('Selected wallet:', walletName);
-  };
-
-  const connect = async () => {
-    setConnecting(true);
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const mockKeyPair = Keypair.generate();
-    setPublicKey(mockKeyPair.publicKey);
-    setConnected(true);
-    setConnecting(false);
-  };
-
-  const disconnect = async () => {
-    setDisconnecting(true);
-    await new Promise(resolve => setTimeout(resolve, 300));
-
-    setPublicKey(null);
-    setConnected(false);
-    setDisconnecting(false);
-  };
-
-  const walletValue: WalletContextState = {
-    publicKey,
-    connected,
-    connecting,
-    disconnecting,
-    select,
-    connect,
-    disconnect,
-  };
+  // Configure WalletConnect adapter with project ID
+  const wallets = useMemo(
+    () => [
+      new WalletConnectWalletAdapter({
+        network: 'mainnet-beta' as any,
+        options: {
+          projectId: 'bf22e397164491caa066ada6d64c6756',
+          metadata: {
+            name: 'Wino Business',
+            description: 'Telegram Mini App for business payments',
+            url: typeof window !== 'undefined' ? window.location.origin : 'https://wino.business',
+            icons: [typeof window !== 'undefined' ? `${window.location.origin}/icon.png` : 'https://wino.business/icon.png'],
+          },
+        },
+      }),
+    ],
+    []
+  );
 
   return (
-    <ConnectionContext.Provider value={{ connection }}>
-      <WalletContext.Provider value={walletValue}>
+    <ConnectionProvider endpoint={endpoint}>
+      <SolanaWalletProvider wallets={wallets} autoConnect={false}>
         {children}
-      </WalletContext.Provider>
-    </ConnectionContext.Provider>
+      </SolanaWalletProvider>
+    </ConnectionProvider>
   );
 }

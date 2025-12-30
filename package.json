@@ -9,20 +9,23 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "next": "^14.2.24",
+    "@solana/wallet-adapter-base": "^0.9.27",
+    "@solana/wallet-adapter-react": "^0.15.39",
+    "@solana/wallet-adapter-walletconnect": "^0.1.21",
+    "@solana/web3.js": "^1.95.8",
     "@telegram-apps/telegram-ui": "^2.1.13",
     "@twa-dev/sdk": "^8.0.2",
     "lucide-react": "^0.562.0",
-    "@solana/web3.js": "^1.95.8"
+    "next": "^14.2.24",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
-    "typescript": "^5.3.3",
     "@types/node": "^20.10.5",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "eslint": "^8.56.0",
-    "eslint-config-next": "^14.2.24"
+    "eslint-config-next": "^14.2.24",
+    "typescript": "^5.3.3"
   }
 }

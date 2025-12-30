@@ -1,7 +1,8 @@
 import { Connection, PublicKey, TransactionSignature, clusterApiUrl } from '@solana/web3.js';
 
 export function getSolanaConnection(): Connection {
-  const cluster = process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'devnet';
+  // Use mainnet-beta as per requirements
+  const cluster = process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'mainnet-beta';
   const endpoint = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || clusterApiUrl(cluster as any);
   return new Connection(endpoint, 'confirmed');
 }
