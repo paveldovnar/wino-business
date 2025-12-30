@@ -30,6 +30,18 @@ export interface WatchIncomingPaymentsOptions {
 }
 
 /**
+ * Normalize timestamp to seconds.
+ * Handles both milliseconds (Date.now()) and seconds (Solana blockTime).
+ * @param timestamp Timestamp in ms or seconds
+ * @returns Timestamp in seconds
+ */
+function normalizeToSeconds(timestamp: number | undefined): number {
+  if (!timestamp) return 0;
+  // If timestamp > 1e12, it's in milliseconds
+  return timestamp > 1e12 ? Math.floor(timestamp / 1000) : timestamp;
+}
+
+/**
  * Compute the Associated Token Account (ATA) address for a wallet and mint.
  * This is a deterministic address derived from the wallet and mint.
  *
@@ -164,7 +176,7 @@ export function watchIncomingUSDCPayments(
                   tx,
                   merchantPubkey,
                   options.reference,
-                  options.invoiceCreatedAt
+                  undefined // Don't pass ATA for primary watcher (uses reference)
                 );
 
                 if (payment && validatePayment(payment, options)) {
@@ -223,21 +235,26 @@ export function watchIncomingUSDCPayments(
                 }
 
                 // Check if transaction is within invoice timeframe
-                const txTimestamp = (tx.blockTime || 0) * 1000;
-                const invoiceStart = options.invoiceCreatedAt
-                  ? options.invoiceCreatedAt.getTime() - 30000 // 30 seconds before invoice creation
+                // Normalize both timestamps to seconds for comparison
+                const txBlockTimeSec = tx.blockTime || 0; // Already in seconds
+                const invoiceCreatedAtSec = options.invoiceCreatedAt
+                  ? normalizeToSeconds(options.invoiceCreatedAt.getTime())
                   : 0;
+                const invoiceStartSec = invoiceCreatedAtSec - 30; // 30 seconds before invoice creation
 
-                if (txTimestamp < invoiceStart) {
-                  // Transaction too old, skip
+                // If blockTime is null/0, skip time filter (don't reject)
+                if (txBlockTimeSec > 0 && txBlockTimeSec < invoiceStartSec) {
+                  console.log(`[incoming-payment-watcher] FALLBACK: Tx too old - blockTime: ${txBlockTimeSec}, invoiceStart: ${invoiceStartSec}`);
                   continue;
                 }
+
+                console.log(`[incoming-payment-watcher] FALLBACK: Time check passed - blockTime: ${txBlockTimeSec}, invoiceStart: ${invoiceStartSec}`);
 
                 const payment = parseUSDCTransfer(
                   tx,
                   merchantPubkey,
                   undefined, // Don't require reference for fallback
-                  options.invoiceCreatedAt
+                  merchantUsdcAta // Pass ATA for direct destination matching
                 );
 
                 if (payment && validatePayment(payment, options)) {
@@ -275,6 +292,7 @@ export function watchIncomingUSDCPayments(
 
 /**
  * Validate that a payment meets the invoice requirements.
+ * Uses BigInt for precise amount comparison to avoid floating point errors.
  *
  * @param payment Detected payment
  * @param options Invoice options
@@ -284,24 +302,31 @@ function validatePayment(
   payment: IncomingPayment,
   options: WatchIncomingPaymentsOptions
 ): boolean {
+  // Convert to base units (lamports) for precise comparison
+  const paymentBaseUnits = BigInt(Math.round(payment.amount * Math.pow(10, USDC_DECIMALS)));
+
   // Check if amount matches (if expected amount is set)
   if (options.expectedAmount !== undefined) {
-    if (payment.amount >= options.expectedAmount) {
-      console.log('[incoming-payment-watcher] Amount matches!', payment.amount, '>=', options.expectedAmount);
+    const expectedBaseUnits = BigInt(Math.round(options.expectedAmount * Math.pow(10, USDC_DECIMALS)));
+
+    if (paymentBaseUnits >= expectedBaseUnits) {
+      console.log(
+        `[incoming-payment-watcher] ✓ Amount matches! ${payment.amount} USDC (${paymentBaseUnits} base units) >= ${options.expectedAmount} USDC (${expectedBaseUnits} base units)`
+      );
       return true;
     } else {
       console.log(
-        `[incoming-payment-watcher] Amount too low: ${payment.amount} < ${options.expectedAmount}`
+        `[incoming-payment-watcher] ✗ Amount too low: ${payment.amount} USDC (${paymentBaseUnits} base units) < ${options.expectedAmount} USDC (${expectedBaseUnits} base units)`
       );
       return false;
     }
   } else {
     // No expected amount, accept any USDC payment > 0
-    if (payment.amount > 0) {
-      console.log('[incoming-payment-watcher] Custom amount accepted:', payment.amount);
+    if (paymentBaseUnits > 0n) {
+      console.log(`[incoming-payment-watcher] ✓ Custom amount accepted: ${payment.amount} USDC (${paymentBaseUnits} base units)`);
       return true;
     } else {
-      console.log('[incoming-payment-watcher] Amount is zero, rejecting');
+      console.log('[incoming-payment-watcher] ✗ Amount is zero, rejecting');
       return false;
     }
   }
@@ -311,17 +336,20 @@ function validatePayment(
  * Parse a Solana transaction to extract USDC transfer information.
  * RECEIVE-ONLY: Only extracts transfer data, never creates or signs transactions.
  *
+ * Scans ALL instructions (including inner instructions) for token transfers.
+ * Handles transactions with multiple transfers by finding the one to merchant.
+ *
  * @param tx Parsed transaction from Solana RPC
  * @param merchantPubkey Merchant's public key to check if they are the recipient
  * @param referencePubkey Optional Solana Pay reference for safe matching
- * @param invoiceCreatedAt Optional invoice creation timestamp for time-based filtering
+ * @param merchantUsdcAta Optional merchant USDC ATA for direct matching
  * @returns IncomingPayment if USDC was transferred to merchant, null otherwise
  */
 function parseUSDCTransfer(
   tx: ParsedTransactionWithMeta,
   merchantPubkey: PublicKey,
   referencePubkey?: string,
-  invoiceCreatedAt?: Date
+  merchantUsdcAta?: PublicKey
 ): IncomingPayment | null {
   if (!tx.meta || !tx.transaction) {
     return null;
@@ -345,73 +373,112 @@ function parseUSDCTransfer(
     console.log('[incoming-payment-watcher] Reference match found in transaction');
   }
 
-  // Look for SPL token transfer instructions
+  // Collect ALL parsed instructions (main + inner)
+  const allInstructions: any[] = [];
+
+  // Add main instructions
   for (const instruction of message.instructions) {
-    // Check if this is a parsed instruction
     if ('parsed' in instruction) {
-      const parsed = instruction.parsed;
+      allInstructions.push(instruction.parsed);
+    }
+  }
 
-      // Check for SPL token transfer
-      if (
-        parsed.type === 'transfer' ||
-        parsed.type === 'transferChecked'
-      ) {
-        const info = parsed.info;
-
-        // Verify it's a USDC transfer
-        if (parsed.type === 'transferChecked' && info.mint !== USDC_MINT) {
-          continue;
-        }
-
-        // Get the destination token account owner (the actual recipient)
-        const destination = info.destination;
-
-        // Find the destination account in accountKeys
-        const destAccountIndex = accountKeys.findIndex(
-          key => key.pubkey.toString() === destination
-        );
-
-        if (destAccountIndex === -1) {
-          continue;
-        }
-
-        // Get the actual owner of the destination token account
-        // For SPL tokens, we need to check the postTokenBalances to find the owner
-        const postTokenBalances = tx.meta.postTokenBalances || [];
-        const destTokenBalance = postTokenBalances.find(
-          balance => balance.accountIndex === destAccountIndex
-        );
-
-        if (destTokenBalance && destTokenBalance.owner) {
-          const recipientOwner = destTokenBalance.owner;
-
-          // Check if the merchant is the recipient
-          if (recipientOwner === merchantPubkey.toBase58()) {
-            const amount =
-              parsed.type === 'transferChecked'
-                ? parseFloat(info.tokenAmount.uiAmountString)
-                : parseFloat(info.amount) / Math.pow(10, USDC_DECIMALS);
-
-            const sourceAccount = info.source;
-            const sourceTokenBalance = (tx.meta.preTokenBalances || []).find(
-              balance =>
-                accountKeys[balance.accountIndex]?.pubkey.toString() === sourceAccount
-            );
-
-            return {
-              signature: tx.transaction.signatures[0],
-              from: sourceTokenBalance?.owner || 'unknown',
-              to: recipientOwner,
-              amount,
-              timestamp: (tx.blockTime || 0) * 1000,
-              mint: USDC_MINT,
-            };
-          }
+  // Add inner instructions (from meta)
+  if (tx.meta.innerInstructions) {
+    for (const innerGroup of tx.meta.innerInstructions) {
+      for (const instruction of innerGroup.instructions) {
+        if ('parsed' in instruction) {
+          allInstructions.push(instruction.parsed);
         }
       }
     }
   }
 
+  console.log(`[incoming-payment-watcher] Found ${allInstructions.length} total parsed instructions in tx`);
+
+  // Look for SPL token transfers in ALL instructions
+  const transfers: any[] = [];
+  for (const parsed of allInstructions) {
+    if (parsed.type === 'transfer' || parsed.type === 'transferChecked') {
+      transfers.push(parsed);
+    }
+  }
+
+  console.log(`[incoming-payment-watcher] Found ${transfers.length} token transfers in tx`);
+
+  // Find the USDC transfer to merchant
+  for (const parsed of transfers) {
+    const info = parsed.info;
+
+    // Verify it's a USDC transfer (for transferChecked only)
+    if (parsed.type === 'transferChecked' && info.mint !== USDC_MINT) {
+      console.log(`[incoming-payment-watcher] Transfer skipped - wrong mint: ${info.mint}`);
+      continue;
+    }
+
+    const destination = info.destination;
+
+    // If we have merchantUsdcAta, match directly
+    if (merchantUsdcAta) {
+      if (destination !== merchantUsdcAta.toBase58()) {
+        console.log(`[incoming-payment-watcher] Transfer skipped - destination ${destination.slice(0, 8)}... != merchant ATA ${merchantUsdcAta.toBase58().slice(0, 8)}...`);
+        continue;
+      }
+      console.log(`[incoming-payment-watcher] ✓ Destination matches merchant USDC ATA`);
+    } else {
+      // Fallback: check via postTokenBalances
+      const destAccountIndex = accountKeys.findIndex(
+        key => key.pubkey.toString() === destination
+      );
+
+      if (destAccountIndex === -1) {
+        console.log(`[incoming-payment-watcher] Transfer skipped - destination not in accountKeys`);
+        continue;
+      }
+
+      const postTokenBalances = tx.meta.postTokenBalances || [];
+      const destTokenBalance = postTokenBalances.find(
+        balance => balance.accountIndex === destAccountIndex
+      );
+
+      if (!destTokenBalance || !destTokenBalance.owner) {
+        console.log(`[incoming-payment-watcher] Transfer skipped - no token balance owner found`);
+        continue;
+      }
+
+      if (destTokenBalance.owner !== merchantPubkey.toBase58()) {
+        console.log(`[incoming-payment-watcher] Transfer skipped - owner ${destTokenBalance.owner.slice(0, 8)}... != merchant ${merchantPubkey.toBase58().slice(0, 8)}...`);
+        continue;
+      }
+      console.log(`[incoming-payment-watcher] ✓ Destination owner matches merchant`);
+    }
+
+    // Extract amount
+    const amount =
+      parsed.type === 'transferChecked'
+        ? parseFloat(info.tokenAmount.uiAmountString)
+        : parseFloat(info.amount) / Math.pow(10, USDC_DECIMALS);
+
+    console.log(`[incoming-payment-watcher] ✓ USDC transfer found: ${amount} USDC to merchant`);
+
+    // Get source (sender)
+    const sourceAccount = info.source;
+    const sourceTokenBalance = (tx.meta.preTokenBalances || []).find(
+      balance =>
+        accountKeys[balance.accountIndex]?.pubkey.toString() === sourceAccount
+    );
+
+    return {
+      signature: tx.transaction.signatures[0],
+      from: sourceTokenBalance?.owner || 'unknown',
+      to: merchantUsdcAta?.toBase58() || merchantPubkey.toBase58(),
+      amount,
+      timestamp: (tx.blockTime || 0) * 1000,
+      mint: USDC_MINT,
+    };
+  }
+
+  console.log(`[incoming-payment-watcher] No matching USDC transfer to merchant found`);
   return null;
 }
 
