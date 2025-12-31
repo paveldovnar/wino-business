@@ -11,14 +11,27 @@ interface InvoiceStore {
 }
 
 class FileInvoiceStore implements InvoiceStore {
-  private dataDir = path.join(process.cwd(), '.data');
-  private filePath = path.join(this.dataDir, 'invoices.json');
+  private dataDir: string;
+  private filePath: string;
+
+  constructor() {
+    // In production (Vercel), use /tmp directory (writable)
+    // In development, use project .data directory
+    if (process.env.NODE_ENV === 'production') {
+      this.dataDir = '/tmp/.data';
+      console.log('[invoicesStore] Using /tmp file storage (production without KV)');
+    } else {
+      this.dataDir = path.join(process.cwd(), '.data');
+      console.log('[invoicesStore] Using local .data file storage (development)');
+    }
+    this.filePath = path.join(this.dataDir, 'invoices.json');
+  }
 
   private async ensureDataDir() {
     try {
       await fs.mkdir(this.dataDir, { recursive: true });
     } catch (err) {
-      // Ignore if exists
+      console.error('[invoicesStore] Error creating data directory:', err);
     }
   }
 
@@ -136,13 +149,17 @@ export function getInvoiceStore(): InvoiceStore {
   const hasUpstash = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN;
 
   if (hasKV) {
-    console.log('[invoicesStore] Using Vercel KV storage');
+    console.log('[invoicesStore] Using Vercel KV storage (recommended for production)');
     storeInstance = new RedisInvoiceStore('vercel');
   } else if (hasUpstash) {
-    console.log('[invoicesStore] Using Upstash Redis storage');
+    console.log('[invoicesStore] Using Upstash Redis storage (recommended for production)');
     storeInstance = new RedisInvoiceStore('upstash');
   } else {
-    console.log('[invoicesStore] Using local file storage');
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('[invoicesStore] WARNING: Running in production without KV/Redis!');
+      console.warn('[invoicesStore] Using /tmp file storage - data will be lost on container restart');
+      console.warn('[invoicesStore] Set KV_REST_API_URL and KV_REST_API_TOKEN in Vercel for persistent storage');
+    }
     storeInstance = new FileInvoiceStore();
   }
 
