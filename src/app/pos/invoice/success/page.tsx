@@ -69,6 +69,27 @@ export default function InvoiceSuccessPage() {
             </div>
           )}
         </div>
+
+        {signature && (
+          <a
+            href={`https://solscan.io/tx/${signature}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              marginTop: '16px',
+              padding: '12px 24px',
+              backgroundColor: '#4CAF50',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              textDecoration: 'none',
+              display: 'inline-block',
+              fontSize: '14px',
+            }}
+          >
+            View on Solscan →
+          </a>
+        )}
       </div>
 
       <div className={styles.actions}>

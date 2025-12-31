@@ -78,12 +78,30 @@ src/
 
 ## Environment Variables
 
-Create a `.env.local` file in the root directory:
+Create a `.env.local` file in the root directory. See `.env.example` for all options.
 
+**Required:**
 ```env
-NEXT_PUBLIC_SOLANA_RPC_URL=https://api.devnet.solana.com
-NEXT_PUBLIC_SOLANA_CLUSTER=devnet
+# Helius Configuration (Required for webhooks)
+HELIUS_API_KEY=your_helius_api_key_here
+HELIUS_WEBHOOK_SECRET=your_random_secret_string_here
+
+# Solana RPC (Fallback - Helius recommended)
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY
 ```
+
+**Optional (for Vercel deployment with persistent storage):**
+```env
+# Vercel KV (recommended for production)
+KV_REST_API_URL=your_kv_url
+KV_REST_API_TOKEN=your_kv_token
+
+# OR Upstash Redis
+UPSTASH_REDIS_REST_URL=your_redis_url
+UPSTASH_REDIS_REST_TOKEN=your_redis_token
+```
+
+*Note: Without KV/Redis configured, the app uses local file storage (`.data/invoices.json`) which works for local development but is not suitable for serverless deployments.*
 
 ## Getting Started
 
@@ -108,6 +126,71 @@ npm run build
 ```bash
 npm start
 ```
+
+## Helius Webhook Setup
+
+This app uses Helius Enhanced Webhooks for real-time payment notifications. Follow these steps to set up webhooks:
+
+### Prerequisites
+1. Sign up for a Helius account at https://helius.dev
+2. Get your API key from the Helius dashboard
+3. Generate a secure random string for `HELIUS_WEBHOOK_SECRET` (e.g., `openssl rand -hex 32`)
+4. Add both to your `.env.local` file
+
+### Option 1: Manual Setup via Helius Dashboard
+
+1. Go to https://dev.helius.xyz/webhooks
+2. Click "New Webhook"
+3. Configure:
+   - **Webhook URL**: `https://your-deployment.vercel.app/api/webhooks/helius`
+   - **Webhook Type**: Enhanced
+   - **Transaction Types**: ANY
+   - **Account Addresses**: Your merchant wallet address (the one that receives payments)
+   - **Auth Header**: `Bearer YOUR_HELIUS_WEBHOOK_SECRET` (must match your env var)
+4. Save the webhook
+
+### Option 2: Automated Setup via Script
+
+```bash
+# Set environment variables
+export HELIUS_API_KEY="your_helius_api_key"
+export HELIUS_WEBHOOK_SECRET="your_webhook_secret"
+
+# Run setup script
+npx ts-node scripts/setup-helius-webhook.ts <merchantWallet> <deploymentUrl>
+
+# Example:
+npx ts-node scripts/setup-helius-webhook.ts 5nL8...xyz https://wino-business.vercel.app
+```
+
+### Webhook Verification
+
+To verify webhooks are working:
+
+1. Create an invoice in your deployed app
+2. Pay it with a test transaction
+3. Check your Helius webhook dashboard for delivery logs
+4. Check your app logs for webhook processing
+
+### Important Notes
+
+- **Authorization**: The webhook endpoint requires `Authorization: Bearer <HELIUS_WEBHOOK_SECRET>` header
+- **Enhanced Webhooks**: Provides detailed transaction data including token transfers
+- **Account Matching**: Webhook watches your merchant wallet address for incoming USDC transfers
+- **Reference Matching**: Payment is matched by Solana Pay reference in transaction
+- **Amount Validation**: BigInt comparison ensures precise USDC amount matching
+
+### Troubleshooting
+
+**Webhook not receiving events:**
+- Verify merchant wallet address is correct in webhook config
+- Check that webhook URL is publicly accessible (not localhost)
+- Verify `HELIUS_WEBHOOK_SECRET` matches in webhook config and `.env.local`
+
+**Payment not detected:**
+- Check webhook delivery logs in Helius dashboard
+- Verify transaction contains the invoice reference pubkey
+- Check server logs for webhook processing errors
 
 ## Theme Support
 

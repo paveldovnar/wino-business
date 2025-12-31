@@ -12,7 +12,6 @@ export default function InvoicePendingPage() {
   const [signature, setSignature] = useState('');
   const [from, setFrom] = useState('');
   const [amount, setAmount] = useState('0');
-  const [debugInfo, setDebugInfo] = useState<any>(null);
 
   useEffect(() => {
     const invoiceId = sessionStorage.getItem('current_invoice_id');
@@ -37,30 +36,28 @@ export default function InvoicePendingPage() {
 
         if (!isActive) return;
 
-        console.log('[pos/invoice/pending] Status:', data.status, data.debug);
-
-        if (data.debug) {
-          setDebugInfo(data.debug);
-        }
+        console.log('[pos/invoice/pending] Status:', data.status);
 
         if (data.status === 'paid') {
-          // Payment detected!
-          setSignature(data.signature || '');
+          // Payment detected by webhook!
+          setSignature(data.paidTxSig || '');
           setFrom(data.payer || '');
-          setAmount(data.matchedAmount?.toString() || '0');
+          setAmount(data.amountUsd?.toString() || '0');
 
           // Store for success page
-          sessionStorage.setItem('invoice_signature', data.signature || '');
+          sessionStorage.setItem('invoice_signature', data.paidTxSig || '');
           sessionStorage.setItem('invoice_from', data.payer || '');
-          sessionStorage.setItem('invoice_amount', data.matchedAmount?.toString() || '0');
+          sessionStorage.setItem('invoice_amount', data.amountUsd?.toString() || '0');
 
           // Navigate to success
           setTimeout(() => {
             router.push('/pos/invoice/success');
           }, 500);
-        } else if (data.status === 'expired') {
+        } else if (data.status === 'declined') {
+          // Only navigate to declined if explicitly declined (not timeout)
           router.push('/pos/invoice/declined');
         }
+        // If status is 'pending', keep polling (no auto-decline)
       } catch (err) {
         console.error('[pos/invoice/pending] Error polling status:', err);
       }
@@ -113,40 +110,29 @@ export default function InvoicePendingPage() {
         </div>
 
         <p className={styles.description} style={{ fontSize: '12px', marginTop: '16px', opacity: 0.7 }}>
-          Server verifying incoming USDC transfers via merchant ATA...
+          Waiting for payment confirmation via Helius webhook...
         </p>
 
-        {/* Debug info (dev only) */}
-        {debugInfo && (
-          <div className={styles.card} style={{ marginTop: '16px', fontSize: '11px', fontFamily: 'monospace' }}>
-            <div className={styles.detailRow}>
-              <span className={styles.detailLabel}>Txs Checked</span>
-              <span className={styles.detailValue}>{debugInfo.txsChecked || 0}</span>
-            </div>
-            <div className={styles.detailRow}>
-              <span className={styles.detailLabel}>Transfers Found</span>
-              <span className={styles.detailValue}>{debugInfo.transfersFoundCount || 0}</span>
-            </div>
-            <div className={styles.detailRow}>
-              <span className={styles.detailLabel}>Last Checked</span>
-              <span className={styles.detailValue}>
-                {debugInfo.checkedAt ? new Date(debugInfo.checkedAt * 1000).toLocaleTimeString() : '-'}
-              </span>
-            </div>
-            {debugInfo.rejectReasons && Object.keys(debugInfo.rejectReasons).length > 0 && (
-              <div className={styles.detailRow}>
-                <span className={styles.detailLabel}>Rejects</span>
-                <span className={styles.detailValue}>
-                  {JSON.stringify(debugInfo.rejectReasons)}
-                </span>
-              </div>
-            )}
-          </div>
-        )}
-
-        <p className={styles.description} style={{ fontSize: '10px', marginTop: '8px', opacity: 0.5 }}>
-          Check browser console for detailed status polling logs
+        <p className={styles.description} style={{ fontSize: '12px', marginTop: '8px', opacity: 0.5 }}>
+          Payment will be detected automatically when confirmed on-chain.
+          You can go back if the customer cancels.
         </p>
+
+        <button
+          onClick={() => router.push('/pos')}
+          style={{
+            marginTop: '24px',
+            padding: '12px 24px',
+            backgroundColor: 'transparent',
+            color: '#666',
+            border: '1px solid #666',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontSize: '14px',
+          }}
+        >
+          Cancel & Go Back
+        </button>
       </div>
     </div>
   );

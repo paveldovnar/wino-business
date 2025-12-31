@@ -52,16 +52,16 @@ export default function InvoiceScanPage() {
         }
 
         const data = await res.json();
-        const { invoice, solanaPayUri } = data;
+        const { invoiceId, solanaPayUrl } = data;
 
-        setInvoiceId(invoice.id);
-        setSolanaPayURI(solanaPayUri);
+        setInvoiceId(invoiceId);
+        setSolanaPayURI(solanaPayUrl);
 
         // Store invoice ID in sessionStorage for pending page
-        sessionStorage.setItem('current_invoice_id', invoice.id);
+        sessionStorage.setItem('current_invoice_id', invoiceId);
 
         // Generate QR code
-        const qrDataUrl = await QRCode.toDataURL(solanaPayUri, {
+        const qrDataUrl = await QRCode.toDataURL(solanaPayUrl, {
           errorCorrectionLevel: 'M',
           margin: 1,
           width: 300,
@@ -71,7 +71,7 @@ export default function InvoiceScanPage() {
         setQrCodeDataUrl(qrDataUrl);
         setLoading(false);
 
-        console.log('[invoice/scan] Invoice created:', invoice.id);
+        console.log('[invoice/scan] Invoice created:', invoiceId);
       } catch (err) {
         console.error('[invoice/scan] Error creating invoice:', err);
         alert('Failed to create invoice');

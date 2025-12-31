@@ -1,4 +1,4 @@
-import { StoredInvoice } from '../solana/verifyInvoice';
+import { StoredInvoice } from '../solana/types';
 import fs from 'fs/promises';
 import path from 'path';
 
