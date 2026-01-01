@@ -18,7 +18,6 @@ import bs58 from 'bs58';
 
 const MAX_AMOUNT_USDC = 0.05;
 const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
-const SYSTEM_PROGRAM_ID = new PublicKey('11111111111111111111111111111111');
 
 export async function POST(req: NextRequest) {
   try {
@@ -118,33 +117,25 @@ export async function POST(req: NextRequest) {
     // Build transaction
     const transaction = new Transaction();
 
-    // Add USDC transfer
+    // Add USDC transfer with reference (Solana Pay standard)
     const amountMinor = BigInt(Math.round(invoice.amountUsd * Math.pow(10, USDC_DECIMALS)));
-    transaction.add(
-      createTransferInstruction(
-        payerAta,
-        merchantAta,
-        payerKeypair.publicKey,
-        amountMinor,
-        [],
-        TOKEN_PROGRAM_ID
-      )
+    const transferInstruction = createTransferInstruction(
+      payerAta,
+      merchantAta,
+      payerKeypair.publicKey,
+      amountMinor,
+      [],
+      TOKEN_PROGRAM_ID
     );
 
-    // Add reference as readonly account (Solana Pay standard)
-    transaction.add(
-      new TransactionInstruction({
-        keys: [
-          {
-            pubkey: reference,
-            isSigner: false,
-            isWritable: false,
-          },
-        ],
-        programId: SYSTEM_PROGRAM_ID,
-        data: Buffer.alloc(0),
-      })
-    );
+    // Add reference as additional readonly account key
+    transferInstruction.keys.push({
+      pubkey: reference,
+      isSigner: false,
+      isWritable: false,
+    });
+
+    transaction.add(transferInstruction);
 
     // Add memo
     const memoData = Buffer.from(`wino:${invoiceId}`, 'utf8');
