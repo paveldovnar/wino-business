@@ -5,8 +5,6 @@ import { useRouter } from 'next/navigation';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import styles from './pending.module.css';
 
-const POLL_INTERVAL = 2000; // 2 seconds
-
 export default function InvoicePendingPage() {
   const router = useRouter();
   const [signature, setSignature] = useState('');
@@ -24,19 +22,13 @@ export default function InvoicePendingPage() {
 
     setFrom('waiting...');
 
-    let pollInterval: NodeJS.Timeout;
-    let isActive = true;
+    // Use Server-Sent Events for real-time updates
+    const eventSource = new EventSource(`/api/invoices/${invoiceId}/stream`);
 
-    const pollStatus = async () => {
-      if (!isActive) return;
-
+    eventSource.onmessage = (event) => {
       try {
-        const res = await fetch(`/api/invoices/${invoiceId}/status`);
-        const data = await res.json();
-
-        if (!isActive) return;
-
-        console.log('[pos/invoice/pending] Status:', data.status);
+        const data = JSON.parse(event.data);
+        console.log('[pos/invoice/pending] SSE update:', data);
 
         if (data.status === 'paid') {
           // Payment detected by webhook!
@@ -49,27 +41,29 @@ export default function InvoicePendingPage() {
           sessionStorage.setItem('invoice_from', data.payer || '');
           sessionStorage.setItem('invoice_amount', data.amountUsd?.toString() || '0');
 
+          // Close event source
+          eventSource.close();
+
           // Navigate to success
           setTimeout(() => {
             router.push('/pos/invoice/success');
           }, 500);
         } else if (data.status === 'declined') {
-          // Only navigate to declined if explicitly declined (not timeout)
+          eventSource.close();
           router.push('/pos/invoice/declined');
         }
-        // If status is 'pending', keep polling (no auto-decline)
       } catch (err) {
-        console.error('[pos/invoice/pending] Error polling status:', err);
+        console.error('[pos/invoice/pending] Error parsing SSE data:', err);
       }
     };
 
-    // Start polling
-    pollStatus();
-    pollInterval = setInterval(pollStatus, POLL_INTERVAL);
+    eventSource.onerror = (err) => {
+      console.error('[pos/invoice/pending] SSE error:', err);
+      eventSource.close();
+    };
 
     return () => {
-      isActive = false;
-      clearInterval(pollInterval);
+      eventSource.close();
     };
   }, [router]);
 
@@ -110,11 +104,11 @@ export default function InvoicePendingPage() {
         </div>
 
         <p className={styles.description} style={{ fontSize: '12px', marginTop: '16px', opacity: 0.7 }}>
-          Waiting for payment confirmation via Helius webhook...
+          Real-time payment detection via Helius webhook
         </p>
 
         <p className={styles.description} style={{ fontSize: '12px', marginTop: '8px', opacity: 0.5 }}>
-          Payment will be detected automatically when confirmed on-chain.
+          Payment will update instantly when confirmed on-chain.
           You can go back if the customer cancels.
         </p>
 

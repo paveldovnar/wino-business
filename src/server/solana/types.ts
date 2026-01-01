@@ -9,7 +9,7 @@ export interface StoredInvoice {
   merchantUsdcAta: string;
   amountUsd?: number; // in USDC UI (undefined for custom amount)
   amountMinor?: string; // BigInt as string (base units, 6 decimals for USDC)
-  referencePubkey: string; // Solana Pay reference
+  referencePubkey: string; // Solana Pay reference - PRIMARY matching key
   label?: string;
   message?: string;
   status: 'pending' | 'paid' | 'declined';

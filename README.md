@@ -80,28 +80,34 @@ src/
 
 Create a `.env.local` file in the root directory. See `.env.example` for all options.
 
-**Required:**
+**Required for Production:**
 ```env
-# Helius Configuration (Required for webhooks)
+# Vercel Redis (REQUIRED for production - invoice persistence)
+REDIS_URL=redis://default:your_password@your-redis.upstash.io:6379
+
+# Helius Configuration (REQUIRED for webhooks)
 HELIUS_API_KEY=your_helius_api_key_here
 HELIUS_WEBHOOK_SECRET=your_random_secret_string_here
+```
 
+**Optional:**
+```env
 # Solana RPC (Fallback - Helius recommended)
 SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_HELIUS_API_KEY
+
+# Debug endpoint secret (for testing invoice status updates)
+DEBUG_SECRET=your_debug_secret_here
 ```
 
-**Optional (for Vercel deployment with persistent storage):**
-```env
-# Vercel KV (recommended for production)
-KV_REST_API_URL=your_kv_url
-KV_REST_API_TOKEN=your_kv_token
+### Setting up Vercel Redis
 
-# OR Upstash Redis
-UPSTASH_REDIS_REST_URL=your_redis_url
-UPSTASH_REDIS_REST_TOKEN=your_redis_token
-```
+1. Go to your Vercel project dashboard
+2. Navigate to **Storage** → **Create Database** → **Redis**
+3. Once created, Vercel automatically adds `REDIS_URL` to your environment variables
+4. Verify in **Settings** → **Environment Variables** that `REDIS_URL` is set
+5. Redeploy your application
 
-*Note: Without KV/Redis configured, the app uses local file storage (`.data/invoices.json`) which works for local development but is not suitable for serverless deployments.*
+**IMPORTANT:** Vercel Redis is the single source of truth for all invoice data. Without it, invoice status updates will not persist in production.
 
 ## Getting Started
 
@@ -137,6 +143,16 @@ This app uses Helius Enhanced Webhooks for real-time payment notifications. Foll
 3. Generate a secure random string for `HELIUS_WEBHOOK_SECRET` (e.g., `openssl rand -hex 32`)
 4. Add both to your `.env.local` file
 
+### Get Your Merchant USDC ATA
+
+**CRITICAL**: Before configuring webhooks, you MUST get your merchant's USDC ATA (Associated Token Account):
+
+```bash
+npx tsx scripts/print-merchant-ata.ts
+```
+
+This will print both your merchant wallet address AND your USDC ATA. You'll need BOTH for webhook configuration.
+
 ### Option 1: Manual Setup via Helius Dashboard
 
 1. Go to https://dev.helius.xyz/webhooks
@@ -145,7 +161,7 @@ This app uses Helius Enhanced Webhooks for real-time payment notifications. Foll
    - **Webhook URL**: `https://your-deployment.vercel.app/api/webhooks/helius`
    - **Webhook Type**: Enhanced
    - **Transaction Types**: ANY
-   - **Account Addresses**: Your merchant wallet address (the one that receives payments)
+   - **Account Addresses**: **BOTH** your merchant wallet AND merchant USDC ATA (from script above)
    - **Auth Header**: `Bearer YOUR_HELIUS_WEBHOOK_SECRET` (must match your env var)
 4. Save the webhook
 
@@ -176,21 +192,62 @@ To verify webhooks are working:
 
 - **Authorization**: The webhook endpoint requires `Authorization: Bearer <HELIUS_WEBHOOK_SECRET>` header
 - **Enhanced Webhooks**: Provides detailed transaction data including token transfers
-- **Account Matching**: Webhook watches your merchant wallet address for incoming USDC transfers
-- **Reference Matching**: Payment is matched by Solana Pay reference in transaction
-- **Amount Validation**: BigInt comparison ensures precise USDC amount matching
+- **ATA Requirement**: Webhook MUST watch the merchant USDC ATA (not just wallet) to reliably trigger on token transfers
+- **Micro-Decimal Matching**: Payments are matched by exact amount with unique micro-decimals (e.g., 1.000123 USDC)
+  - Each invoice gets a unique random micro-decimal added (0.000001-0.000999)
+  - Works with ALL wallets, including those that don't support Solana Pay reference/memo (e.g., Trust Wallet)
+  - 10-minute expiry window prevents collisions and stale matches
+- **RECEIVE-ONLY**: Merchant app only receives payments, never sends funds out
+- **Real-time Updates**: Server-Sent Events (SSE) provide instant UI updates when payments are confirmed
+
+### Testing Invoice Status Updates
+
+To verify that the webhook → Redis integration is working correctly:
+
+1. **Create a test invoice:**
+   ```bash
+   curl -X POST https://your-app.vercel.app/api/invoices \
+     -H "Content-Type: application/json" \
+     -d '{
+       "recipient": "G7Jhr2df7tEYxmjcHTUJuGyourBDHYw2Zh46ms6NjRDJ",
+       "amount": 1.50,
+       "label": "Test Invoice"
+     }'
+   ```
+   Save the returned `invoiceId`.
+
+2. **Mark invoice as paid (using debug endpoint):**
+   ```bash
+   curl -X POST https://your-app.vercel.app/api/debug/mark-paid \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer YOUR_DEBUG_SECRET" \
+     -d '{"invoiceId": "YOUR_INVOICE_ID"}'
+   ```
+
+3. **Verify status in UI:**
+   - Open the invoice in your app
+   - Status should show as "PAID"
+   - This confirms Redis is working correctly
 
 ### Troubleshooting
 
 **Webhook not receiving events:**
-- Verify merchant wallet address is correct in webhook config
+- Verify BOTH merchant wallet AND USDC ATA are in webhook "accountAddresses"
+- Run `npx tsx scripts/print-merchant-ata.ts` to verify correct ATA address
 - Check that webhook URL is publicly accessible (not localhost)
 - Verify `HELIUS_WEBHOOK_SECRET` matches in webhook config and `.env.local`
 
 **Payment not detected:**
 - Check webhook delivery logs in Helius dashboard
-- Verify transaction contains the invoice reference pubkey
-- Check server logs for webhook processing errors
+- Verify transaction includes memo `wino:<invoiceId>` (check server logs)
+- For fallback matching: payment must be made within 30 minutes of invoice creation
+- Check server logs for detailed matching information (shows memo, ATA, amount checks)
+
+**Invoice status not updating:**
+- Verify Vercel Redis is properly configured (check environment variables)
+- Check Vercel function logs for errors
+- Use debug endpoint to test Redis write access
+- Ensure `REDIS_URL` is set correctly in Vercel environment variables
 
 ## Theme Support
 

@@ -1,12 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getInvoice, updateInvoice, listInvoices } from '@/server/storage/invoicesStore';
-import { USDC_MINT, USDC_DECIMALS } from '@/server/solana/types';
+import { getInvoiceByReference, markInvoicePaid } from '@/server/storage/invoicesStore';
+import { USDC_MINT } from '@/server/solana/types';
 
 /**
  * Helius Enhanced Webhook Handler
- * Receives transaction notifications and updates invoice status on payment detection.
+ * Reference-based invoice matching for robust payment detection
  *
  * RECEIVE-ONLY: Only processes incoming USDC transfers to merchant.
+ * Uses reference public key matching to identify payments reliably.
+ */
+
+/**
+ * GET handler - Return friendly message for browser access
+ */
+export async function GET(req: NextRequest) {
+  return NextResponse.json({
+    service: 'Wino Business Helius Webhook',
+    status: 'ok',
+    message: 'Use POST to send webhook events',
+  });
+}
+
+/**
+ * POST handler - Process webhook events
  */
 export async function POST(req: NextRequest) {
   try {
@@ -15,30 +31,40 @@ export async function POST(req: NextRequest) {
     const expectedAuth = `Bearer ${process.env.HELIUS_WEBHOOK_SECRET}`;
 
     if (!process.env.HELIUS_WEBHOOK_SECRET) {
-      console.error('[helius-webhook] HELIUS_WEBHOOK_SECRET not configured');
+      console.error('[webhook] HELIUS_WEBHOOK_SECRET not configured');
       return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
     }
 
     if (authHeader !== expectedAuth) {
-      console.error('[helius-webhook] Invalid authorization header');
+      console.error('[webhook] Invalid authorization header');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // 2. Parse webhook payload
     const payload = await req.json();
-    console.log('[helius-webhook] Received webhook:', JSON.stringify(payload).slice(0, 500));
+    console.log('[webhook] Received webhook event');
 
     // Enhanced webhooks come as array
     const transactions = Array.isArray(payload) ? payload : [payload];
 
+    console.log(`[webhook] Processing ${transactions.length} transaction(s)`);
+
+    // Process transactions without throwing errors
     for (const txData of transactions) {
-      await processTransaction(txData);
+      try {
+        await processTransaction(txData);
+      } catch (err: any) {
+        console.error('[webhook] Error processing transaction (non-fatal):', err);
+        // Continue processing other transactions
+      }
     }
 
+    // Always return 200 OK to Helius
     return NextResponse.json({ success: true });
   } catch (err: any) {
-    console.error('[helius-webhook] Error processing webhook:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error('[webhook] Critical error in webhook handler:', err);
+    // Still return 200 to prevent Helius from retrying
+    return NextResponse.json({ success: false, error: err.message }, { status: 200 });
   }
 }
 
@@ -48,105 +74,78 @@ async function processTransaction(txData: any) {
     const accountData = txData.accountData || [];
     const tokenTransfers = txData.tokenTransfers || [];
 
-    console.log(`[helius-webhook] Processing tx ${signature}`);
-    console.log(`[helius-webhook] Token transfers: ${tokenTransfers.length}`);
+    console.log('[webhook] ================================================');
+    console.log('[webhook] Processing transaction:', signature);
 
-    if (tokenTransfers.length === 0) {
-      console.log('[helius-webhook] No token transfers, skipping');
-      return;
+    // Extract all account keys from the transaction
+    const accountKeys: string[] = accountData
+      .map((acc: any) => acc?.account)
+      .filter((key: string | null) => key != null);
+
+    console.log(`[webhook] Extracted ${accountKeys.length} account keys from transaction`);
+
+    if (accountKeys.length > 0) {
+      console.log('[webhook] Account keys:', accountKeys.slice(0, 5).join(', '), '...');
     }
 
-    // Find USDC transfers
-    const usdcTransfers = tokenTransfers.filter((transfer: any) =>
-      transfer.mint === USDC_MINT
-    );
+    // Try to match invoice by reference
+    let matchedInvoice = null;
+    let matchedReference = null;
 
-    if (usdcTransfers.length === 0) {
-      console.log('[helius-webhook] No USDC transfers, skipping');
-      return;
-    }
-
-    console.log(`[helius-webhook] Found ${usdcTransfers.length} USDC transfers`);
-
-    // Get all pending invoices
-    const allInvoices = await listInvoices();
-    const pendingInvoices = allInvoices.filter(inv => inv.status === 'pending');
-
-    if (pendingInvoices.length === 0) {
-      console.log('[helius-webhook] No pending invoices');
-      return;
-    }
-
-    // Extract all account keys from transaction
-    const accountKeys = new Set<string>();
-    if (txData.transaction?.message?.accountKeys) {
-      for (const key of txData.transaction.message.accountKeys) {
-        accountKeys.add(typeof key === 'string' ? key : key.pubkey);
-      }
-    }
-
-    // Try to match transfers to invoices
-    for (const transfer of usdcTransfers) {
-      const toTokenAccount = transfer.toTokenAccount;
-      const fromUserAccount = transfer.fromUserAccount;
-      const amount = transfer.tokenAmount;
-
-      console.log(`[helius-webhook] Transfer: ${amount} USDC to ${toTokenAccount}`);
-
-      // Find matching invoice
-      for (const invoice of pendingInvoices) {
-        // Check if transfer is to merchant's USDC ATA
-        if (toTokenAccount !== invoice.merchantUsdcAta) {
-          continue;
-        }
-
-        console.log(`[helius-webhook] Matched merchant ATA for invoice ${invoice.id}`);
-
-        // Check if reference is in transaction
-        if (!accountKeys.has(invoice.referencePubkey)) {
-          console.log(`[helius-webhook] Reference ${invoice.referencePubkey} not in tx accountKeys`);
-          continue;
-        }
-
-        console.log(`[helius-webhook] ✓ Reference matched for invoice ${invoice.id}`);
-
-        // Validate amount (if not custom)
-        if (invoice.amountMinor) {
-          const expectedAmount = BigInt(invoice.amountMinor);
-          const receivedAmount = BigInt(Math.round(amount * Math.pow(10, USDC_DECIMALS)));
-
-          if (receivedAmount < expectedAmount) {
-            console.log(`[helius-webhook] Amount too low: ${receivedAmount} < ${expectedAmount}`);
-            continue;
-          }
-        } else {
-          // Custom amount - just check > 0
-          if (amount <= 0) {
-            console.log('[helius-webhook] Amount is zero');
-            continue;
-          }
-        }
-
-        // Payment matched!
-        console.log(`[helius-webhook] ✓✓✓ PAYMENT MATCHED for invoice ${invoice.id}`);
-        console.log(`[helius-webhook] Signature: ${signature}`);
-        console.log(`[helius-webhook] Amount: ${amount} USDC`);
-        console.log(`[helius-webhook] From: ${fromUserAccount}`);
-
-        await updateInvoice(invoice.id, {
-          status: 'paid',
-          paidTxSig: signature,
-          paidAtSec: Math.floor(Date.now() / 1000),
-          payer: fromUserAccount,
-        });
-
-        console.log(`[helius-webhook] Invoice ${invoice.id} marked as PAID`);
-
-        // Stop checking other invoices for this transfer
+    for (const accountKey of accountKeys) {
+      const invoice = await getInvoiceByReference(accountKey);
+      if (invoice) {
+        matchedInvoice = invoice;
+        matchedReference = accountKey;
+        console.log(`[webhook] ✓ Found invoice by reference: ${accountKey}`);
         break;
       }
     }
-  } catch (err) {
-    console.error('[helius-webhook] Error processing transaction:', err);
+
+    if (!matchedInvoice) {
+      console.log('[webhook] ✗ No matching invoice found for this transaction');
+      console.log('[webhook] Searched references:', accountKeys.join(', '));
+      return;
+    }
+
+    // Check if invoice already paid (idempotency)
+    if (matchedInvoice.status === 'paid') {
+      console.log('[webhook] Invoice already marked as paid, skipping');
+      return;
+    }
+
+    // Verify it's a USDC transfer
+    const usdcTransfers = tokenTransfers.filter(
+      (transfer: any) => transfer.mint === USDC_MINT
+    );
+
+    if (usdcTransfers.length === 0) {
+      console.log('[webhook] ⚠ No USDC transfers found in transaction');
+      // Still mark as paid since reference matched
+    } else {
+      console.log(`[webhook] Found ${usdcTransfers.length} USDC transfer(s)`);
+    }
+
+    // Extract payer info
+    let payer: string | undefined;
+    if (usdcTransfers.length > 0) {
+      payer = usdcTransfers[0].fromUserAccount;
+      const amount = usdcTransfers[0].tokenAmount;
+      console.log(`[webhook] Transfer: ${amount} USDC from ${payer || 'unknown'}`);
+    }
+
+    // Mark invoice as paid
+    console.log('[webhook] ✓✓✓ PAYMENT CONFIRMED ✓✓✓');
+    console.log('[webhook]   Invoice ID:', matchedInvoice.id);
+    console.log('[webhook]   Reference:', matchedReference);
+    console.log('[webhook]   Transaction:', signature);
+    console.log('[webhook]   Payer:', payer || 'unknown');
+
+    await markInvoicePaid(matchedInvoice.id, signature, payer);
+
+    console.log('[webhook] ✅ Invoice marked as PAID successfully');
+  } catch (err: any) {
+    console.error('[webhook] Error processing transaction:', err);
+    throw err;
   }
 }
