@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction, sendAndConfirmTransaction } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
 import { getAssociatedTokenAddress, createTransferInstruction, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { getInvoice } from '@/server/storage/invoicesStore';
 import { USDC_MINT, USDC_DECIMALS } from '@/server/solana/types';
@@ -152,20 +152,30 @@ export async function POST(req: NextRequest) {
     console.log('[test/pay-invoice]   To ATA:', merchantAta.toBase58());
     console.log('[test/pay-invoice]   Reference:', reference.toBase58());
 
-    // 8. Send transaction
+    // 8. Send transaction (without waiting for confirmation to avoid timeout)
     let signature: string;
     try {
-      signature = await sendAndConfirmTransaction(connection, transaction, [payerKeypair], {
-        commitment: 'confirmed',
+      // Get recent blockhash
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+      transaction.recentBlockhash = blockhash;
+      transaction.lastValidBlockHeight = lastValidBlockHeight;
+      transaction.feePayer = payerKeypair.publicKey;
+
+      // Sign and send transaction
+      transaction.sign(payerKeypair);
+      signature = await connection.sendRawTransaction(transaction.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
       });
     } catch (err: any) {
       console.error('[test/pay-invoice] Transaction failed:', err.message);
       return NextResponse.json({ error: `Transaction failed: ${err.message}` }, { status: 500 });
     }
 
-    console.log('[test/pay-invoice] ✅ Payment sent successfully');
+    console.log('[test/pay-invoice] ✅ Payment sent (confirmation pending)');
     console.log('[test/pay-invoice]   Invoice:', invoiceId);
     console.log('[test/pay-invoice]   Signature:', signature);
+    console.log('[test/pay-invoice]   Note: Webhook will update invoice status once confirmed');
 
     return NextResponse.json({
       ok: true,
