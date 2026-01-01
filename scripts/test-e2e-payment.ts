@@ -43,12 +43,18 @@ async function runE2ETest() {
     const healthResponse = await fetch(`${API_BASE}/api/health`);
     const health = await healthResponse.json();
 
-    if (health.status !== 'healthy') {
-      console.error('❌ API is not healthy:', health);
+    // Only require storage to be healthy for test to work
+    if (!health.checks?.storage?.ok) {
+      console.error('❌ Storage is not healthy:', health);
       process.exit(1);
     }
 
-    console.log('✅ API is healthy\n');
+    console.log('✅ Storage is healthy:', health.checks.storage.message);
+    if (health.status !== 'healthy') {
+      console.log('⚠ Note: Some env vars not configured, but test can proceed\n');
+    } else {
+      console.log('✅ All systems healthy\n');
+    }
   } catch (err) {
     console.error('❌ Health check failed:', err);
     process.exit(1);
