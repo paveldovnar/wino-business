@@ -3,23 +3,161 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@telegram-apps/telegram-ui';
-import { Building2, TrendingUp, DollarSign, Activity, Shield, CheckCircle2, LogOut, Wallet as WalletIcon } from 'lucide-react';
-import { getBusiness, getTransactions, getPendingTransactions, updateTransactionStatus } from '@/lib/storage';
-import { trackTransaction } from '@/lib/tx-status';
+import { Building2, DollarSign, Shield, CheckCircle2, LogOut } from 'lucide-react';
+import { getBusiness, saveBusiness } from '@/lib/storage';
 import { useWallet } from '@/lib/wallet-mock';
-import { Business, Transaction } from '@/types';
+import { Business } from '@/types';
+import { PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
 import styles from './dashboard.module.css';
+
+const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+
+interface ApiTransaction {
+  id: string;
+  status: 'pending' | 'paid' | 'declined';
+  amountUsd: number;
+  createdAt: number; // unix timestamp in seconds
+  paidAt?: number; // unix timestamp in seconds
+  paidTxSig?: string;
+  payer?: string;
+}
+
+interface DashboardMetrics {
+  totalBalance: number;
+  incomeToday: number;
+  incomeLast30Days: number;
+  averageDay: number;
+  todayVsAverage: number; // percentage
+  lastUpdate: Date | null;
+}
 
 export default function DashboardPage() {
   const router = useRouter();
   const { publicKey, disconnect } = useWallet();
   const [business, setBusiness] = useState<Business | null>(null);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [balance, setBalance] = useState(0);
-  const [showWalletMenu, setShowWalletMenu] = useState(false);
+  const [merchantAta, setMerchantAta] = useState<string | null>(null);
+  const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
+  const [metrics, setMetrics] = useState<DashboardMetrics>({
+    totalBalance: 0,
+    incomeToday: 0,
+    incomeLast30Days: 0,
+    averageDay: 0,
+    todayVsAverage: 0,
+    lastUpdate: null,
+  });
+  const [loading, setLoading] = useState(true);
   const [mintVerified, setMintVerified] = useState<boolean | null>(null);
   const [verifying, setVerifying] = useState(false);
 
+  // Compute merchant USDC ATA
+  useEffect(() => {
+    async function computeAta() {
+      if (!publicKey) {
+        setMerchantAta(null);
+        return;
+      }
+
+      try {
+        const ata = await getAssociatedTokenAddress(publicKey, USDC_MINT);
+        setMerchantAta(ata.toBase58());
+        console.log('[dashboard] Merchant USDC ATA:', ata.toBase58());
+      } catch (err) {
+        console.error('[dashboard] Failed to compute ATA:', err);
+        setMerchantAta(null);
+      }
+    }
+
+    computeAta();
+  }, [publicKey]);
+
+  // Fetch transactions from API
+  useEffect(() => {
+    async function fetchTransactions() {
+      if (!merchantAta) {
+        setTransactions([]);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        console.log('[dashboard] Fetching transactions for ATA:', merchantAta);
+
+        const res = await fetch(`/api/transactions?merchantAta=${merchantAta}`);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        console.log('[dashboard] Fetched transactions:', data.count);
+
+        setTransactions(data.transactions || []);
+      } catch (err) {
+        console.error('[dashboard] Failed to fetch transactions:', err);
+        setTransactions([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchTransactions();
+
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchTransactions, 30000);
+    return () => clearInterval(interval);
+  }, [merchantAta]);
+
+  // Calculate metrics from transactions
+  useEffect(() => {
+    const now = Date.now() / 1000; // current time in seconds
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStartSec = todayStart.getTime() / 1000;
+
+    const last30DaysStart = now - 30 * 24 * 60 * 60;
+    const last90DaysStart = now - 90 * 24 * 60 * 60;
+
+    // Filter paid transactions only
+    const paidTxs = transactions.filter((tx) => tx.status === 'paid' && tx.paidAt);
+
+    // Total balance (all paid)
+    const totalBalance = paidTxs.reduce((sum, tx) => sum + tx.amountUsd, 0);
+
+    // Income today
+    const incomeToday = paidTxs
+      .filter((tx) => tx.paidAt! >= todayStartSec)
+      .reduce((sum, tx) => sum + tx.amountUsd, 0);
+
+    // Income last 30 days
+    const incomeLast30Days = paidTxs
+      .filter((tx) => tx.paidAt! >= last30DaysStart)
+      .reduce((sum, tx) => sum + tx.amountUsd, 0);
+
+    // Calculate average day (last 90 days)
+    const last90DaysTxs = paidTxs.filter((tx) => tx.paidAt! >= last90DaysStart);
+    const last90DaysIncome = last90DaysTxs.reduce((sum, tx) => sum + tx.amountUsd, 0);
+    const averageDay = last90DaysIncome / 90;
+
+    // Today vs average
+    const todayVsAverage = averageDay > 0 ? ((incomeToday - averageDay) / averageDay) * 100 : 0;
+
+    // Last update time
+    const lastUpdate = paidTxs.length > 0
+      ? new Date(Math.max(...paidTxs.map((tx) => tx.paidAt! * 1000)))
+      : null;
+
+    setMetrics({
+      totalBalance,
+      incomeToday,
+      incomeLast30Days,
+      averageDay,
+      todayVsAverage,
+      lastUpdate,
+    });
+  }, [transactions]);
+
+  // Load business and verify NFT
   useEffect(() => {
     const businessData = getBusiness();
     if (!businessData) {
@@ -29,51 +167,10 @@ export default function DashboardPage() {
 
     setBusiness(businessData);
 
-    const loadTransactions = () => {
-      const txs = getTransactions();
-      setTransactions(txs);
-
-      const successfulTxs = txs.filter(tx => tx.status === 'success');
-      const totalBalance = successfulTxs.reduce((sum, tx) => sum + tx.amount, 0);
-      setBalance(totalBalance);
-    };
-
-    loadTransactions();
-
-    // Restore tracking for any pending transactions
-    // This ensures that if the user refreshed the page or reopened the app,
-    // pending transactions will continue to be tracked
-    const pendingTxs = getPendingTransactions();
-    const cleanupFunctions: (() => void)[] = [];
-
-    pendingTxs.forEach(tx => {
-      console.log(`[dashboard] Restoring tracking for pending tx: ${tx.signature.slice(0, 8)}...`);
-
-      const cleanup = trackTransaction(tx.signature, {
-        onConfirmed: () => {
-          console.log(`[dashboard] Transaction confirmed: ${tx.signature.slice(0, 8)}...`);
-          updateTransactionStatus(tx.signature, 'success');
-          loadTransactions(); // Reload to update UI
-        },
-        onFailed: (error) => {
-          console.error(`[dashboard] Transaction failed: ${tx.signature.slice(0, 8)}...`, error);
-          updateTransactionStatus(tx.signature, 'failed');
-          loadTransactions(); // Reload to update UI
-        },
-      });
-
-      cleanupFunctions.push(cleanup);
-    });
-
     // Verify NFT mint status if business has a mint address
     if (businessData.nftMintAddress) {
       verifyMintStatus(businessData.nftMintAddress);
     }
-
-    // Cleanup all tracking subscriptions when component unmounts
-    return () => {
-      cleanupFunctions.forEach(cleanup => cleanup());
-    };
   }, [router]);
 
   const verifyMintStatus = async (mintAddress: string) => {
@@ -98,20 +195,6 @@ export default function DashboardPage() {
     }
   };
 
-  if (!business) {
-    return null;
-  }
-
-  const todayTransactions = transactions.filter(tx => {
-    const today = new Date();
-    const txDate = new Date(tx.timestamp);
-    return txDate.toDateString() === today.toDateString();
-  }).length;
-
-  const successRate = transactions.length > 0
-    ? (transactions.filter(tx => tx.status === 'success').length / transactions.length) * 100
-    : 0;
-
   const handleDisconnect = async () => {
     if (confirm('Disconnect wallet? Your business profile will remain saved.')) {
       try {
@@ -122,6 +205,19 @@ export default function DashboardPage() {
         console.error('[dashboard] Failed to disconnect wallet:', err);
       }
     }
+  };
+
+  if (!business) {
+    return null;
+  }
+
+  const formatCurrency = (amount: number) => {
+    return amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  const formatPercentage = (value: number) => {
+    const sign = value >= 0 ? '+' : '';
+    return `${sign}${value.toFixed(1)}%`;
   };
 
   return (
@@ -150,41 +246,72 @@ export default function DashboardPage() {
       </div>
 
       <div className={styles.content}>
+        {/* Balance Card */}
         <div className={styles.balanceCard}>
           <div className={styles.balanceHeader}>
-            <span className={styles.balanceLabel}>Total balance</span>
+            <span className={styles.balanceLabel}>Total Balance</span>
             <DollarSign size={20} strokeWidth={2} className={styles.balanceIcon} />
           </div>
           <div className={styles.balanceAmount}>
-            ${balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ${loading ? '—' : formatCurrency(metrics.totalBalance)}
           </div>
           <div className={styles.balanceSubtext}>
-            {todayTransactions} transactions today
+            {metrics.lastUpdate
+              ? `Last updated ${metrics.lastUpdate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+              : 'No transactions yet'}
           </div>
         </div>
 
+        {/* Income Stats */}
         <div className={styles.statsGrid}>
           <div className={styles.statCard}>
-            <div className={styles.statIcon}>
-              <Activity size={24} strokeWidth={2} />
-            </div>
-            <div className={styles.statContent}>
-              <div className={styles.statValue}>{transactions.length}</div>
-              <div className={styles.statLabel}>Total transactions</div>
+            <div className={styles.statLabel}>Income Today</div>
+            <div className={styles.statValue}>
+              ${loading ? '—' : formatCurrency(metrics.incomeToday)}
             </div>
           </div>
 
           <div className={styles.statCard}>
-            <div className={styles.statIcon}>
-              <TrendingUp size={24} strokeWidth={2} />
-            </div>
-            <div className={styles.statContent}>
-              <div className={styles.statValue}>{successRate.toFixed(0)}%</div>
-              <div className={styles.statLabel}>Success rate</div>
+            <div className={styles.statLabel}>Last 30 Days</div>
+            <div className={styles.statValue}>
+              ${loading ? '—' : formatCurrency(metrics.incomeLast30Days)}
             </div>
           </div>
         </div>
 
+        {/* Today's Performance */}
+        <div className={styles.performanceCard}>
+          <div className={styles.performanceHeader}>
+            <span className={styles.performanceLabel}>Today's Performance</span>
+          </div>
+          <div className={styles.performanceContent}>
+            <div className={styles.performanceRow}>
+              <span className={styles.performanceText}>Today</span>
+              <span className={styles.performanceValue}>
+                ${loading ? '—' : formatCurrency(metrics.incomeToday)}
+              </span>
+            </div>
+            <div className={styles.performanceRow}>
+              <span className={styles.performanceText}>vs Average</span>
+              <span
+                className={styles.performanceValue}
+                style={{
+                  color: metrics.todayVsAverage >= 0 ? '#4CAF50' : '#f44336',
+                }}
+              >
+                {loading ? '—' : formatPercentage(metrics.todayVsAverage)}
+              </span>
+            </div>
+            <div className={styles.performanceRow}>
+              <span className={styles.performanceText}>Avg per day (90d)</span>
+              <span className={styles.performanceValue}>
+                ${loading ? '—' : formatCurrency(metrics.averageDay)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Business Identity NFT */}
         <div className={styles.identityCard}>
           <div className={styles.identityHeader}>
             <div className={styles.identityIcon}>
@@ -239,7 +366,12 @@ export default function DashboardPage() {
               <Button
                 size="m"
                 mode="outline"
-                onClick={() => router.push('/identity/mint/review')}
+                onClick={() => {
+                  // Clear failed mint address to allow retry
+                  const updatedBusiness = { ...business, nftMintAddress: undefined };
+                  saveBusiness(updatedBusiness);
+                  router.push('/identity/mint/review');
+                }}
                 className={styles.mintButton}
               >
                 Retry mint
@@ -257,6 +389,7 @@ export default function DashboardPage() {
           )}
         </div>
 
+        {/* POS Mode Button */}
         <div className={styles.actions}>
           <Button
             size="l"
