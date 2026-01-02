@@ -48,6 +48,10 @@ class RedisAdapter implements StorageAdapter {
     };
   }
 
+  async publish(channel: string, message: string): Promise<number> {
+    return await this.redis.publish(channel, message);
+  }
+
   async ping(): Promise<string> {
     return await this.redis.ping();
   }

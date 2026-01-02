@@ -19,6 +19,9 @@ export interface StorageAdapter {
   // Pipeline/batch operations
   pipeline(): StoragePipeline;
 
+  // Pub/Sub (optional - for SSE)
+  publish?(channel: string, message: string): Promise<number | void>;
+
   // Health check
   ping(): Promise<string>;
 }

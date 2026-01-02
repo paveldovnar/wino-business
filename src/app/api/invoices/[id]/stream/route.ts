@@ -37,6 +37,9 @@ export async function GET(
         paidTxSig: invoice.paidTxSig,
         payer: invoice.payer,
         paidAtSec: invoice.paidAtSec,
+        amountUsd: invoice.amountUsd,
+        needsReview: invoice.needsReview,
+        matchedTxSig: invoice.matchedTxSig,
       });
 
       // If already paid/declined, close stream
@@ -87,6 +90,9 @@ export async function GET(
               paidTxSig: updatedInvoice.paidTxSig,
               payer: updatedInvoice.payer,
               paidAtSec: updatedInvoice.paidAtSec,
+              amountUsd: updatedInvoice.amountUsd,
+              needsReview: updatedInvoice.needsReview,
+              matchedTxSig: updatedInvoice.matchedTxSig,
             });
 
             // Close stream if invoice is no longer pending

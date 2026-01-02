@@ -14,7 +14,10 @@ export interface StoredInvoice {
   message?: string;
   status: 'pending' | 'paid' | 'declined';
   createdAtSec: number;
+  expiresAtSec: number; // expiration timestamp (createdAtSec + 15 minutes)
   paidTxSig?: string;
   paidAtSec?: number;
   payer?: string;
+  matchedTxSig?: string; // tx signature when matched via fallback (no reference)
+  needsReview?: boolean; // true if multiple invoices matched same payment
 }
