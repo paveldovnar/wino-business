@@ -80,9 +80,9 @@ export async function mintBusinessIdentityNFT({
     const { uri: metadataUri } = await metaplex.nfts().uploadMetadata(metadata);
     console.log('[Metaplex] Metadata uploaded to:', metadataUri);
 
-    // Create NFT
+    // Create NFT and capture the response with transaction details
     console.log('[Metaplex] Creating NFT...');
-    const { nft } = await metaplex.nfts().create({
+    const { nft, response } = await metaplex.nfts().create({
       uri: metadataUri,
       name: metadata.name,
       symbol: metadata.symbol,
@@ -95,13 +95,28 @@ export async function mintBusinessIdentityNFT({
     console.log('[Metaplex] Mint address:', nft.address.toBase58());
     console.log('[Metaplex] Metadata URI:', nft.uri);
 
-    // Get the transaction signature from the NFT creation
-    // Note: Metaplex v0.20.1 doesn't directly return signature,
-    // but we can use the mint address as proof
     const mintAddress = nft.address.toBase58();
 
-    // Return a mock tx signature for now - in production you'd get this from the transaction
-    const txSignature = 'MetaplexCreated_' + mintAddress.slice(0, 32);
+    // Extract the transaction signature from the response
+    // The response contains the signature of the mint transaction
+    const txSignature = response.signature;
+
+    if (!txSignature) {
+      throw new Error('No transaction signature returned from minting operation');
+    }
+
+    console.log('[Metaplex] Transaction signature:', txSignature);
+
+    // Confirm the transaction to ensure it's finalized
+    console.log('[Metaplex] Confirming transaction...');
+    const confirmation = await connection.confirmTransaction(txSignature, 'confirmed');
+
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+
+    console.log('[Metaplex] Transaction confirmed successfully!');
+    console.log('[Metaplex] View on Solscan: https://solscan.io/tx/' + txSignature);
 
     return {
       mintAddress,

@@ -3,17 +3,22 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@telegram-apps/telegram-ui';
-import { Building2, TrendingUp, DollarSign, Activity, Shield, CheckCircle2 } from 'lucide-react';
+import { Building2, TrendingUp, DollarSign, Activity, Shield, CheckCircle2, LogOut, Wallet as WalletIcon } from 'lucide-react';
 import { getBusiness, getTransactions, getPendingTransactions, updateTransactionStatus } from '@/lib/storage';
 import { trackTransaction } from '@/lib/tx-status';
+import { useWallet } from '@/lib/wallet-mock';
 import { Business, Transaction } from '@/types';
 import styles from './dashboard.module.css';
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { publicKey, disconnect } = useWallet();
   const [business, setBusiness] = useState<Business | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [balance, setBalance] = useState(0);
+  const [showWalletMenu, setShowWalletMenu] = useState(false);
+  const [mintVerified, setMintVerified] = useState<boolean | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   useEffect(() => {
     const businessData = getBusiness();
@@ -60,11 +65,38 @@ export default function DashboardPage() {
       cleanupFunctions.push(cleanup);
     });
 
+    // Verify NFT mint status if business has a mint address
+    if (businessData.nftMintAddress) {
+      verifyMintStatus(businessData.nftMintAddress);
+    }
+
     // Cleanup all tracking subscriptions when component unmounts
     return () => {
       cleanupFunctions.forEach(cleanup => cleanup());
     };
   }, [router]);
+
+  const verifyMintStatus = async (mintAddress: string) => {
+    setVerifying(true);
+    try {
+      console.log('[dashboard] Verifying NFT mint:', mintAddress);
+      const res = await fetch(`/api/identity/verify?mint=${mintAddress}`);
+      const data = await res.json();
+
+      if (data.verified) {
+        console.log('[dashboard] NFT verified on-chain:', data.nft);
+        setMintVerified(true);
+      } else {
+        console.warn('[dashboard] NFT not verified:', data.error);
+        setMintVerified(false);
+      }
+    } catch (err) {
+      console.error('[dashboard] Failed to verify mint:', err);
+      setMintVerified(false);
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   if (!business) {
     return null;
@@ -79,6 +111,18 @@ export default function DashboardPage() {
   const successRate = transactions.length > 0
     ? (transactions.filter(tx => tx.status === 'success').length / transactions.length) * 100
     : 0;
+
+  const handleDisconnect = async () => {
+    if (confirm('Disconnect wallet? Your business profile will remain saved.')) {
+      try {
+        await disconnect();
+        console.log('[dashboard] Wallet disconnected');
+        router.push('/welcome');
+      } catch (err) {
+        console.error('[dashboard] Failed to disconnect wallet:', err);
+      }
+    }
+  };
 
   return (
     <div className={styles.container}>
@@ -98,6 +142,11 @@ export default function DashboardPage() {
             <p className={styles.businessType}>Business merchant</p>
           </div>
         </div>
+        {publicKey && (
+          <button onClick={handleDisconnect} className={styles.walletButton} title="Disconnect wallet">
+            <LogOut size={20} strokeWidth={2} />
+          </button>
+        )}
       </div>
 
       <div className={styles.content}>
@@ -144,11 +193,17 @@ export default function DashboardPage() {
             <div className={styles.identityInfo}>
               <div className={styles.identityTitle}>Business Identity NFT</div>
               <div className={styles.identityStatus}>
-                {business.nftMintAddress ? (
+                {verifying ? (
+                  <span className={styles.statusNotMinted}>Verifying...</span>
+                ) : mintVerified === true ? (
                   <div className={styles.statusMinted}>
                     <CheckCircle2 size={16} strokeWidth={2} />
-                    <span>Minted</span>
+                    <span>Minted (verified on-chain)</span>
                   </div>
+                ) : mintVerified === false && business.nftMintAddress ? (
+                  <span className={styles.statusNotMinted} style={{ color: '#f44336' }}>
+                    Not verified on-chain
+                  </span>
                 ) : (
                   <span className={styles.statusNotMinted}>Not minted</span>
                 )}
@@ -156,12 +211,39 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {business.nftMintAddress ? (
+          {business.nftMintAddress && mintVerified === true ? (
             <div className={styles.identityMintAddress}>
               <div className={styles.mintLabel}>Mint Address</div>
               <div className={styles.mintValue}>
                 {business.nftMintAddress.slice(0, 4)}...{business.nftMintAddress.slice(-4)}
               </div>
+              <a
+                href={`https://solscan.io/token/${business.nftMintAddress}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  fontSize: '12px',
+                  color: 'var(--accent)',
+                  marginTop: '4px',
+                  textDecoration: 'none',
+                }}
+              >
+                View on Solscan →
+              </a>
+            </div>
+          ) : business.nftMintAddress && mintVerified === false ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+                Mint address exists locally but not verified on-chain. Try minting again.
+              </p>
+              <Button
+                size="m"
+                mode="outline"
+                onClick={() => router.push('/identity/mint/review')}
+                className={styles.mintButton}
+              >
+                Retry mint
+              </Button>
             </div>
           ) : (
             <Button

@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useWallet } from '@/lib/wallet-mock';
 import { Button } from '@telegram-apps/telegram-ui';
 import { Wallet, ArrowLeft } from 'lucide-react';
+import { getBusiness } from '@/lib/storage';
 import styles from './connect-wallet.module.css';
 
 export default function ConnectWalletPage() {
@@ -34,11 +35,19 @@ export default function ConnectWalletPage() {
       console.log('Calling connect...');
       await connect();
 
-      // On successful connection, navigate to business identity flow
-      // Note: Future NFT minting will happen after business identity is created
-      // The minting transaction will use wallet.signTransaction() to sign the mint transaction
       console.log('Wallet connected successfully');
-      router.push('/business-identity/name');
+
+      // Check if business profile already exists
+      const existingBusiness = getBusiness();
+      if (existingBusiness) {
+        // Business exists - go to dashboard
+        console.log('[connect-wallet] Business profile exists, routing to dashboard');
+        router.push('/dashboard');
+      } else {
+        // No business profile - start onboarding
+        console.log('[connect-wallet] No business profile, starting onboarding');
+        router.push('/business-identity/name');
+      }
     } catch (err) {
       // User cancelled connection or error occurred
       // Stay on this screen and log error

@@ -9,12 +9,37 @@
 .header {
   padding: var(--space-lg) var(--space-md);
   border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .businessInfo {
   display: flex;
   align-items: center;
   gap: var(--space-md);
+}
+
+.walletButton {
+  background: none;
+  border: none;
+  padding: var(--space-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s;
+}
+
+.walletButton:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.walletButton:active {
+  transform: scale(0.95);
 }
 
 .logoWrapper {
