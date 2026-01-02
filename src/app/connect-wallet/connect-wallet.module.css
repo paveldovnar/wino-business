@@ -113,3 +113,42 @@
   gap: var(--space-sm);
   justify-content: flex-end;
 }
+
+.errorBox {
+  width: 100%;
+  max-width: 400px;
+  padding: var(--space-md);
+  background: rgba(244, 67, 54, 0.1);
+  border: 1px solid rgba(244, 67, 54, 0.3);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-md);
+}
+
+.errorText {
+  color: #f44336;
+  font-size: var(--t-footnote);
+  margin: 0;
+  text-align: center;
+}
+
+.successBox {
+  width: 100%;
+  max-width: 400px;
+  padding: var(--space-md);
+  background: rgba(76, 175, 80, 0.1);
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-md);
+}
+
+.successText {
+  color: #4CAF50;
+  font-size: var(--t-footnote);
+  font-weight: 500;
+  margin: 0;
+  text-align: center;
+}
+
+.disconnectButton {
+  border-radius: var(--radius-md) !important;
+}
