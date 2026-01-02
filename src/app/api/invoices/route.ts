@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PublicKey, Keypair } from '@solana/web3.js';
-import { createInvoice, listInvoices } from '@/server/storage/invoicesStore';
+import {
+  createInvoice,
+  listInvoices,
+  expirePendingInvoicesForMerchant,
+} from '@/server/storage/invoicesStore';
 import { getAssociatedTokenAddress, USDC_MINT } from '@/server/solana/utils';
 import { StoredInvoice, USDC_DECIMALS } from '@/server/solana/types';
 
@@ -61,11 +65,24 @@ export async function POST(req: NextRequest) {
       usdcMint
     );
 
-    // Generate unique reference keypair for Solana Pay
+    console.log('[POST /api/invoices] Merchant USDC ATA:', merchantUsdcAta.toBase58());
+
+    // SINGLE PENDING INVOICE ENFORCEMENT:
+    // Expire all existing pending invoices for this merchant ATA
+    // (One POS terminal = one active pending invoice at a time)
+    try {
+      const expiredCount = await expirePendingInvoicesForMerchant(merchantUsdcAta.toBase58());
+      if (expiredCount > 0) {
+        console.log(`[POST /api/invoices] Expired ${expiredCount} old pending invoice(s)`);
+      }
+    } catch (expireErr: any) {
+      console.error('[POST /api/invoices] Error expiring old invoices:', expireErr);
+      // Continue anyway - don't block new invoice creation
+    }
+
+    // Generate reference for backward compatibility (not used in URL)
     const referenceKeypair = Keypair.generate();
     const referencePubkey = referenceKeypair.publicKey.toBase58();
-
-    console.log('[POST /api/invoices] Generated reference:', referencePubkey);
 
     // Create invoice
     const invoiceId = crypto.randomUUID();
@@ -111,15 +128,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Build Solana Pay URI
+    // Build Solana Pay URI (NO reference or memo - amount-only matching)
     const url = new URL(`solana:${recipient}`);
     url.searchParams.set('spl-token', USDC_MINT);
     if (amountUsd) {
-      // Use exact amount (no micro-decimals)
       url.searchParams.set('amount', amountUsd.toString());
     }
-    url.searchParams.set('reference', referencePubkey);
-    url.searchParams.set('memo', `wino:${invoiceId}`);
+    // NOTE: Reference and memo removed - payment matching is amount-only
     url.searchParams.set('label', invoice.label || 'Wino Business');
     url.searchParams.set('message', invoice.message || `Invoice ${invoiceId.slice(0, 8)}`);
 
@@ -127,14 +142,12 @@ export async function POST(req: NextRequest) {
 
     console.log('[POST /api/invoices] ✅ Invoice created successfully');
     console.log('[POST /api/invoices]   ID:', invoice.id);
-    console.log('[POST /api/invoices]   Reference:', referencePubkey);
-    console.log('[POST /api/invoices]   Merchant ATA:', invoice.merchantUsdcAta);
     console.log('[POST /api/invoices]   Amount:', amountUsd, 'USDC');
+    console.log('[POST /api/invoices]   Merchant ATA:', invoice.merchantUsdcAta);
 
     return NextResponse.json({
       invoiceId: invoice.id,
       solanaPayUrl,
-      referencePubkey,
       merchantUsdcAta: invoice.merchantUsdcAta,
       amountUsd: invoice.amountUsd,
     });

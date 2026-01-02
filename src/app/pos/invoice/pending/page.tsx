@@ -10,7 +10,6 @@ export default function InvoicePendingPage() {
   const [signature, setSignature] = useState('');
   const [from, setFrom] = useState('');
   const [amount, setAmount] = useState('0');
-  const [needsReview, setNeedsReview] = useState(false);
 
   useEffect(() => {
     const invoiceId = sessionStorage.getItem('current_invoice_id');
@@ -30,15 +29,6 @@ export default function InvoicePendingPage() {
       try {
         const data = JSON.parse(event.data);
         console.log('[pos/invoice/pending] SSE update:', data);
-
-        // Check if payment needs review (multiple invoices matched)
-        if (data.needsReview) {
-          setNeedsReview(true);
-          setSignature(data.matchedTxSig || '');
-          setFrom(data.payer || '');
-          setAmount(data.amountUsd?.toString() || '0');
-          return; // Stay on page, show review message
-        }
 
         if (data.status === 'paid') {
           // Payment detected by webhook!
@@ -80,42 +70,13 @@ export default function InvoicePendingPage() {
   return (
     <div className={styles.container}>
       <div className={styles.content}>
-        {needsReview ? (
-          <>
-            <div
-              style={{
-                width: '64px',
-                height: '64px',
-                borderRadius: '50%',
-                backgroundColor: '#ff9800',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '32px',
-                marginBottom: '24px',
-              }}
-            >
-              ⚠️
-            </div>
+        <LoadingSpinner size={64} />
 
-            <h2 className={styles.title}>Payment Received - Needs Review</h2>
+        <h2 className={styles.title}>Processing payment</h2>
 
-            <p className={styles.description}>
-              We received a payment but found multiple matching invoices.
-              Please select which invoice to close or contact support.
-            </p>
-          </>
-        ) : (
-          <>
-            <LoadingSpinner size={64} />
-
-            <h2 className={styles.title}>Processing payment</h2>
-
-            <p className={styles.description}>
-              Waiting for blockchain confirmation...
-            </p>
-          </>
-        )}
+        <p className={styles.description}>
+          Waiting for blockchain confirmation...
+        </p>
 
         <div className={styles.card}>
           <div className={styles.detailRow}>
@@ -142,29 +103,14 @@ export default function InvoicePendingPage() {
           )}
         </div>
 
-        {needsReview ? (
-          <>
-            <p className={styles.description} style={{ fontSize: '12px', marginTop: '16px', opacity: 0.7 }}>
-              Transaction detected via fallback matching (no reference)
-            </p>
+        <p className={styles.description} style={{ fontSize: '12px', marginTop: '16px', opacity: 0.7 }}>
+          Real-time payment detection via Helius webhook
+        </p>
 
-            <p className={styles.description} style={{ fontSize: '12px', marginTop: '8px', opacity: 0.5 }}>
-              Multiple invoices have the same amount within the time window.
-              Manual review required to assign payment to correct invoice.
-            </p>
-          </>
-        ) : (
-          <>
-            <p className={styles.description} style={{ fontSize: '12px', marginTop: '16px', opacity: 0.7 }}>
-              Real-time payment detection via Helius webhook
-            </p>
-
-            <p className={styles.description} style={{ fontSize: '12px', marginTop: '8px', opacity: 0.5 }}>
-              Payment will update instantly when confirmed on-chain.
-              You can go back if the customer cancels.
-            </p>
-          </>
-        )}
+        <p className={styles.description} style={{ fontSize: '12px', marginTop: '8px', opacity: 0.5 }}>
+          Payment will update instantly when confirmed on-chain.
+          You can go back if the customer cancels.
+        </p>
 
         <button
           onClick={() => router.push('/pos')}

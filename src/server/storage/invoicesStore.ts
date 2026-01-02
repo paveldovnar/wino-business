@@ -197,6 +197,46 @@ export async function getPendingInvoices(): Promise<StoredInvoice[]> {
 }
 
 /**
+ * Get pending invoice by merchant USDC ATA
+ * Returns the single pending invoice for this merchant (or null)
+ */
+export async function getPendingInvoiceByMerchantAta(
+  merchantUsdcAta: string
+): Promise<StoredInvoice | null> {
+  const pending = await getPendingInvoices();
+  const matches = pending.filter((inv) => inv.merchantUsdcAta === merchantUsdcAta);
+
+  if (matches.length === 0) {
+    return null;
+  }
+
+  // Return most recent (highest createdAtSec)
+  return matches.sort((a, b) => b.createdAtSec - a.createdAtSec)[0];
+}
+
+/**
+ * Expire all pending invoices for a merchant USDC ATA
+ * Used to enforce single pending invoice per POS terminal
+ */
+export async function expirePendingInvoicesForMerchant(
+  merchantUsdcAta: string
+): Promise<number> {
+  console.log('[invoicesStore] Expiring pending invoices for ATA:', merchantUsdcAta);
+
+  const pending = await getPendingInvoices();
+  const toExpire = pending.filter((inv) => inv.merchantUsdcAta === merchantUsdcAta);
+
+  console.log(`[invoicesStore] Found ${toExpire.length} pending invoice(s) to expire`);
+
+  for (const invoice of toExpire) {
+    await updateInvoice(invoice.id, { status: 'declined' });
+    console.log(`[invoicesStore] Expired invoice ${invoice.id}`);
+  }
+
+  return toExpire.length;
+}
+
+/**
  * Find pending invoices matching fallback criteria (no reference)
  * Used when payer wallet doesn't include reference in transaction
  *

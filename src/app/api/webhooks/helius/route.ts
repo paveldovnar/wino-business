@@ -1,18 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  getInvoiceByReference,
+  getPendingInvoiceByMerchantAta,
   markInvoicePaid,
-  findInvoicesByFallbackMatch,
-  markInvoiceFallbackPaid,
 } from '@/server/storage/invoicesStore';
 import { USDC_MINT, USDC_DECIMALS } from '@/server/solana/types';
 
 /**
  * Helius Enhanced Webhook Handler
- * Reference-based invoice matching for robust payment detection
+ * Amount-only invoice matching (NO reference/memo required)
  *
  * RECEIVE-ONLY: Only processes incoming USDC transfers to merchant.
- * Uses reference public key matching to identify payments reliably.
+ * Single pending invoice per merchant ATA - matches by amount only.
  */
 
 /**
@@ -76,152 +74,93 @@ export async function POST(req: NextRequest) {
 async function processTransaction(txData: any) {
   try {
     const signature = txData.signature;
-    const accountData = txData.accountData || [];
     const tokenTransfers = txData.tokenTransfers || [];
+    const txTimestamp = txData.timestamp || Math.floor(Date.now() / 1000);
 
     console.log('[webhook] ================================================');
     console.log('[webhook] Processing transaction:', signature);
+    console.log('[webhook] Timestamp:', txTimestamp);
 
-    // Extract all account keys from the transaction
-    const accountKeys: string[] = accountData
-      .map((acc: any) => acc?.account)
-      .filter((key: string | null) => key != null);
-
-    console.log(`[webhook] Extracted ${accountKeys.length} account keys from transaction`);
-
-    if (accountKeys.length > 0) {
-      console.log('[webhook] Account keys:', accountKeys.slice(0, 5).join(', '), '...');
-    }
-
-    // Try to match invoice by reference
-    let matchedInvoice = null;
-    let matchedReference = null;
-
-    for (const accountKey of accountKeys) {
-      const invoice = await getInvoiceByReference(accountKey);
-      if (invoice) {
-        matchedInvoice = invoice;
-        matchedReference = accountKey;
-        console.log(`[webhook] ✓ Found invoice by reference: ${accountKey}`);
-        break;
-      }
-    }
-
-    if (!matchedInvoice) {
-      console.log('[webhook] ✗ No invoice matched by reference');
-      console.log('[webhook] Searched references:', accountKeys.join(', '));
-
-      // PRIORITY #2: Fallback matching (no reference in transaction)
-      console.log('[webhook] Attempting fallback matching...');
-
-      const usdcTransfers = tokenTransfers.filter(
-        (transfer: any) => transfer.mint === USDC_MINT
-      );
-
-      if (usdcTransfers.length === 0) {
-        console.log('[webhook] ✗ No USDC transfers found, cannot perform fallback match');
-        return;
-      }
-
-      console.log(`[webhook] Found ${usdcTransfers.length} USDC transfer(s)`);
-
-      // Try fallback matching for each USDC transfer
-      for (const transfer of usdcTransfers) {
-        const toAccount = transfer.toTokenAccount;
-        const amountRaw = transfer.tokenAmount;
-        const amountUsd = parseFloat(amountRaw);
-
-        console.log('[webhook] Checking USDC transfer:', {
-          to: toAccount,
-          amount: amountUsd,
-        });
-
-        // Get transaction block time
-        const txBlockTime = txData.timestamp || Math.floor(Date.now() / 1000);
-
-        // Find matching invoices
-        const matches = await findInvoicesByFallbackMatch(
-          toAccount,
-          amountUsd,
-          txBlockTime
-        );
-
-        if (matches.length === 0) {
-          console.log('[webhook] ✗ No invoices match fallback criteria');
-          continue;
-        }
-
-        if (matches.length === 1) {
-          // Exactly one match - auto-approve
-          console.log('[webhook] ✓✓ FALLBACK MATCH FOUND (single)');
-          console.log('[webhook]   Invoice ID:', matches[0].id);
-          console.log('[webhook]   Amount:', matches[0].amountUsd, 'USDC');
-          console.log('[webhook]   Transaction:', signature);
-
-          const payer = transfer.fromUserAccount;
-          await markInvoiceFallbackPaid(matches[0].id, signature, payer, false);
-
-          console.log('[webhook] ✅ Invoice marked as PAID (fallback)');
-          return;
-        } else {
-          // Multiple matches - needs review
-          console.log('[webhook] ⚠️  MULTIPLE INVOICES MATCHED (needs review)');
-          console.log('[webhook]   Matched invoices:', matches.map((m) => m.id).join(', '));
-          console.log('[webhook]   Amount:', amountUsd, 'USDC');
-          console.log('[webhook]   Transaction:', signature);
-
-          const payer = transfer.fromUserAccount;
-
-          // Mark all matching invoices as needsReview
-          for (const match of matches) {
-            await markInvoiceFallbackPaid(match.id, signature, payer, true);
-          }
-
-          console.log('[webhook] ⚠️  All matching invoices marked for review');
-          return;
-        }
-      }
-
-      console.log('[webhook] ✗ No fallback matches found');
-      return;
-    }
-
-    // Check if invoice already paid (idempotency)
-    if (matchedInvoice.status === 'paid') {
-      console.log('[webhook] Invoice already marked as paid, skipping');
-      return;
-    }
-
-    // Verify it's a USDC transfer
+    // Filter USDC transfers only
     const usdcTransfers = tokenTransfers.filter(
       (transfer: any) => transfer.mint === USDC_MINT
     );
 
     if (usdcTransfers.length === 0) {
-      console.log('[webhook] ⚠ No USDC transfers found in transaction');
-      // Still mark as paid since reference matched
-    } else {
-      console.log(`[webhook] Found ${usdcTransfers.length} USDC transfer(s)`);
+      console.log('[webhook] ✗ No USDC transfers found, skipping');
+      return;
     }
 
-    // Extract payer info
-    let payer: string | undefined;
-    if (usdcTransfers.length > 0) {
-      payer = usdcTransfers[0].fromUserAccount;
-      const amount = usdcTransfers[0].tokenAmount;
-      console.log(`[webhook] Transfer: ${amount} USDC from ${payer || 'unknown'}`);
+    console.log(`[webhook] Found ${usdcTransfers.length} USDC transfer(s)`);
+
+    // Process each USDC transfer
+    for (const transfer of usdcTransfers) {
+      const merchantAta = transfer.toTokenAccount;
+      const amountUsd = parseFloat(transfer.tokenAmount);
+      const payer = transfer.fromUserAccount;
+
+      console.log('[webhook] Checking USDC transfer:', {
+        to: merchantAta,
+        amount: amountUsd,
+        from: payer,
+      });
+
+      // Load THE single pending invoice for this merchant ATA
+      const invoice = await getPendingInvoiceByMerchantAta(merchantAta);
+
+      if (!invoice) {
+        console.log(`[webhook] ✗ No pending invoice for merchant ATA: ${merchantAta}`);
+        continue;
+      }
+
+      console.log('[webhook] ✓ Found pending invoice:', {
+        id: invoice.id,
+        amount: invoice.amountUsd,
+        created: invoice.createdAtSec,
+        expires: invoice.expiresAtSec,
+      });
+
+      // Check if invoice already paid (idempotency)
+      if (invoice.status === 'paid') {
+        console.log('[webhook] Invoice already marked as paid, skipping');
+        continue;
+      }
+
+      // Check if invoice is expired
+      if (txTimestamp > invoice.expiresAtSec) {
+        console.log('[webhook] ⚠️  Invoice expired, skipping');
+        console.log('[webhook]   Expires at:', invoice.expiresAtSec);
+        console.log('[webhook]   Tx time:', txTimestamp);
+        continue;
+      }
+
+      // Match by amount (with tolerance for floating point)
+      const tolerance = 0.000001;
+      const amountDiff = Math.abs(amountUsd - (invoice.amountUsd || 0));
+
+      if (amountDiff > tolerance) {
+        console.log('[webhook] ✗ Amount mismatch:', {
+          expected: invoice.amountUsd,
+          received: amountUsd,
+          diff: amountDiff,
+        });
+        continue;
+      }
+
+      // MATCH FOUND!
+      console.log('[webhook] ✓✓✓ PAYMENT MATCHED ✓✓✓');
+      console.log('[webhook]   Invoice ID:', invoice.id);
+      console.log('[webhook]   Amount:', amountUsd, 'USDC');
+      console.log('[webhook]   Transaction:', signature);
+      console.log('[webhook]   Payer:', payer || 'unknown');
+
+      await markInvoicePaid(invoice.id, signature, payer);
+
+      console.log('[webhook] ✅ Invoice marked as PAID');
+      return; // Stop processing after first match
     }
 
-    // Mark invoice as paid
-    console.log('[webhook] ✓✓✓ PAYMENT CONFIRMED ✓✓✓');
-    console.log('[webhook]   Invoice ID:', matchedInvoice.id);
-    console.log('[webhook]   Reference:', matchedReference);
-    console.log('[webhook]   Transaction:', signature);
-    console.log('[webhook]   Payer:', payer || 'unknown');
-
-    await markInvoicePaid(matchedInvoice.id, signature, payer);
-
-    console.log('[webhook] ✅ Invoice marked as PAID successfully');
+    console.log('[webhook] ✗ No matching invoice found');
   } catch (err: any) {
     console.error('[webhook] Error processing transaction:', err);
     throw err;
