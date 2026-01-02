@@ -1,66 +1,117 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, SegmentedControl } from '@telegram-apps/telegram-ui';
+import { Button, SegmentedControl, Placeholder } from '@telegram-apps/telegram-ui';
 import { X, CheckCircle2, Clock, XCircle, Plus } from 'lucide-react';
-import { getTransactions } from '@/lib/storage';
+import { useWallet } from '@/lib/wallet-mock';
 import { Transaction, TransactionStatus } from '@/types';
+import { PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
 import styles from './pos.module.css';
 
-const MOCK_TRANSACTIONS: Transaction[] = [
-  {
-    id: '1',
-    signature: '5Kq...',
-    amount: 150.00,
-    from: '9xQq...7Km2',
-    to: '4Hs3...8Wp1',
-    status: 'success',
-    timestamp: new Date(),
-    type: 'invoice',
-  },
-  {
-    id: '2',
-    signature: '3Jw...',
-    amount: 85.50,
-    from: '7Rp5...2Nm9',
-    to: '4Hs3...8Wp1',
-    status: 'success',
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    type: 'invoice',
-  },
-  {
-    id: '3',
-    signature: '8Mn...',
-    amount: 220.00,
-    from: '2Tp8...5Qr4',
-    to: '4Hs3...8Wp1',
-    status: 'pending',
-    timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    type: 'invoice',
-  },
-  {
-    id: '4',
-    signature: '6Lp...',
-    amount: 45.25,
-    from: '1Kp9...3Ws7',
-    to: '4Hs3...8Wp1',
-    status: 'failed',
-    timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    type: 'invoice',
-  },
-];
+const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 
 export default function POSPage() {
   const router = useRouter();
+  const { publicKey } = useWallet();
   const [filter, setFilter] = useState<'success' | 'pending' | 'failed'>('success');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [merchantAta, setMerchantAta] = useState<string | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Compute merchant USDC ATA when wallet is connected
   useEffect(() => {
-    const storedTxs = getTransactions();
-    const allTxs = storedTxs.length > 0 ? storedTxs : MOCK_TRANSACTIONS;
-    setTransactions(allTxs);
-  }, []);
+    const computeAta = async () => {
+      if (!publicKey) {
+        setMerchantAta(null);
+        return;
+      }
+
+      try {
+        const ata = await getAssociatedTokenAddress(
+          publicKey,
+          USDC_MINT
+        );
+        setMerchantAta(ata.toBase58());
+        console.log('[POS] Merchant USDC ATA:', ata.toBase58());
+      } catch (err) {
+        console.error('[POS] Error computing ATA:', err);
+      }
+    };
+
+    computeAta();
+  }, [publicKey]);
+
+  // Fetch transactions from API
+  const fetchTransactions = async (ata: string) => {
+    try {
+      const res = await fetch(`/api/transactions?merchantAta=${ata}`);
+      if (!res.ok) {
+        throw new Error('Failed to fetch transactions');
+      }
+
+      const data = await res.json();
+      const apiTransactions = data.transactions || [];
+
+      // Map API response to Transaction format
+      const mappedTransactions: Transaction[] = apiTransactions.map((tx: any) => {
+        // Map status: 'paid' -> 'success', 'declined'/'expired' -> 'failed'
+        let status: 'pending' | 'success' | 'failed' = 'pending';
+        if (tx.status === 'paid') {
+          status = 'success';
+        } else if (tx.status === 'declined' || tx.status === 'expired') {
+          status = 'failed';
+        }
+
+        // Use paidAt if available, otherwise createdAt
+        const timestampSec = tx.paidAt || tx.createdAt;
+        const timestamp = new Date(timestampSec * 1000);
+
+        return {
+          id: tx.id,
+          signature: tx.paidTxSig || '',
+          amount: tx.amountUsd || 0,
+          from: tx.payer || '',
+          to: ata, // Merchant ATA
+          status,
+          timestamp,
+          type: 'invoice',
+        };
+      });
+
+      setTransactions(mappedTransactions);
+      setLoading(false);
+    } catch (err) {
+      console.error('[POS] Error fetching transactions:', err);
+      setLoading(false);
+    }
+  };
+
+  // Start polling for transactions
+  useEffect(() => {
+    if (!merchantAta) {
+      setLoading(false);
+      return;
+    }
+
+    // Fetch immediately
+    fetchTransactions(merchantAta);
+
+    // Poll every 10 seconds
+    pollingIntervalRef.current = setInterval(() => {
+      fetchTransactions(merchantAta);
+    }, 10000);
+
+    // Cleanup on unmount
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
+  }, [merchantAta]);
 
   const filteredTransactions = transactions.filter(tx => tx.status === filter);
 
@@ -145,7 +196,25 @@ export default function POSPage() {
       </div>
 
       <div className={styles.content}>
-        {groups.length === 0 ? (
+        {loading ? (
+          <div className={styles.empty}>
+            <Placeholder
+              header="Loading transactions..."
+              description="Fetching your payment history"
+            >
+              <Clock size={48} strokeWidth={2} style={{ opacity: 0.5 }} />
+            </Placeholder>
+          </div>
+        ) : !publicKey ? (
+          <div className={styles.empty}>
+            <Placeholder
+              header="Wallet not connected"
+              description="Please connect your wallet to view transactions"
+            >
+              <X size={48} strokeWidth={2} style={{ opacity: 0.5 }} />
+            </Placeholder>
+          </div>
+        ) : groups.length === 0 ? (
           <div className={styles.empty}>
             <p>No {filter} transactions</p>
           </div>

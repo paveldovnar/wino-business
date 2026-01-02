@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
       message: message || `Invoice ${invoiceId.slice(0, 8)}`,
       status: 'pending',
       createdAtSec: nowSec,
-      expiresAtSec: nowSec + 900, // 15 minutes expiration
+      expiresAtSec: nowSec + 120, // 2 minutes (120 seconds) expiration
     };
 
     // Persist invoice to storage (CRITICAL: must succeed or fail explicitly)
