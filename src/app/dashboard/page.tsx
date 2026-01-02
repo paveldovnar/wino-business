@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@telegram-apps/telegram-ui';
-import { Building2, TrendingUp, DollarSign, Activity } from 'lucide-react';
+import { Building2, TrendingUp, DollarSign, Activity, Shield, CheckCircle2 } from 'lucide-react';
 import { getBusiness, getTransactions, getPendingTransactions, updateTransactionStatus } from '@/lib/storage';
 import { trackTransaction } from '@/lib/tx-status';
 import { Business, Transaction } from '@/types';
@@ -134,6 +134,45 @@ export default function DashboardPage() {
               <div className={styles.statLabel}>Success rate</div>
             </div>
           </div>
+        </div>
+
+        <div className={styles.identityCard}>
+          <div className={styles.identityHeader}>
+            <div className={styles.identityIcon}>
+              <Shield size={24} strokeWidth={2} />
+            </div>
+            <div className={styles.identityInfo}>
+              <div className={styles.identityTitle}>Business Identity NFT</div>
+              <div className={styles.identityStatus}>
+                {business.nftMintAddress ? (
+                  <div className={styles.statusMinted}>
+                    <CheckCircle2 size={16} strokeWidth={2} />
+                    <span>Minted</span>
+                  </div>
+                ) : (
+                  <span className={styles.statusNotMinted}>Not minted</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {business.nftMintAddress ? (
+            <div className={styles.identityMintAddress}>
+              <div className={styles.mintLabel}>Mint Address</div>
+              <div className={styles.mintValue}>
+                {business.nftMintAddress.slice(0, 4)}...{business.nftMintAddress.slice(-4)}
+              </div>
+            </div>
+          ) : (
+            <Button
+              size="m"
+              mode="outline"
+              onClick={() => router.push('/identity/mint/review')}
+              className={styles.mintButton}
+            >
+              Mint identity NFT (optional)
+            </Button>
+          )}
         </div>
 
         <div className={styles.actions}>
