@@ -44,8 +44,10 @@ export async function mintBusinessIdentityNFT({
     console.log('[Metaplex] Metaplex instance created');
 
     // Prepare metadata with required identity_type
+    // NFT name max 32 chars - truncate if needed
+    const truncatedName = businessName.length > 20 ? businessName.slice(0, 20) : businessName;
     const metadata = {
-      name: `${businessName} - Wino Business`,
+      name: `${truncatedName} - Wino`,  // Max 32 chars
       symbol: 'WINO',
       description: `Business Identity NFT for ${businessName}. Created with Wino Business app.`,
       image: logo || 'https://arweave.net/placeholder',
