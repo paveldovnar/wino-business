@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useConnection, useWallet } from '@/lib/wallet-mock';
 import { Button } from '@telegram-apps/telegram-ui';
@@ -18,9 +18,10 @@ export default function IdentityMintCreatingPage() {
   const [status, setStatus] = useState('Preparing...');
   const [error, setError] = useState<string | null>(null);
   const [cancelled, setCancelled] = useState(false);
+  const mintStartedRef = useRef(false);
 
   useEffect(() => {
-    if (cancelled || error) return;
+    if (cancelled || error || mintStartedRef.current) return;
 
     const business = getBusiness();
     if (!business) {
@@ -35,27 +36,29 @@ export default function IdentityMintCreatingPage() {
     }
 
     if (!wallet.connected || !wallet.publicKey) {
-      setError('Wallet not connected');
+      setError('Wallet not connected. Please go back and connect your wallet.');
       return;
     }
+
+    // Prevent double execution
+    mintStartedRef.current = true;
 
     const performMint = async () => {
       try {
         // Step 1: Prepare
-        setStatus('Preparing metadata...');
+        setStatus('Preparing transaction...');
         setProgress(10);
-        await new Promise(resolve => setTimeout(resolve, 500));
 
         if (cancelled) return;
 
-        // Step 2: Upload metadata
-        setStatus('Uploading metadata to Arweave...');
+        // Step 2: Build transaction via API
+        setStatus('Building mint transaction...');
         setProgress(30);
 
         if (cancelled) return;
 
-        // Step 3: Create NFT with Metaplex
-        setStatus('Creating NFT on Solana...');
+        // Step 3: Sign with wallet (this triggers WalletConnect modal)
+        setStatus('Please approve in your wallet...');
         setProgress(50);
 
         const mintResult = await mintBusinessIdentityNFT({
@@ -67,8 +70,22 @@ export default function IdentityMintCreatingPage() {
 
         if (cancelled) return;
 
-        // Step 4: Save result
-        setStatus('Finalizing...');
+        // Step 4: Verify on-chain
+        setStatus('Verifying on-chain...');
+        setProgress(80);
+
+        // Verify the mint exists on-chain
+        const verifyRes = await fetch(`/api/identity/verify?mint=${mintResult.mintAddress}`);
+        const verifyData = await verifyRes.json();
+
+        if (!verifyData.verified) {
+          console.warn('[Mint] Verification pending, mint may still be confirming');
+        } else {
+          console.log('[Mint] Verified on-chain:', verifyData.nft);
+        }
+
+        // Step 5: Save result (only after verification attempt)
+        setStatus('Saving...');
         setProgress(90);
 
         // Update business with mint address
@@ -79,7 +96,10 @@ export default function IdentityMintCreatingPage() {
         saveBusiness(updatedBusiness);
 
         // Store mint result for success page
-        sessionStorage.setItem('mint_result', JSON.stringify(mintResult));
+        sessionStorage.setItem('mint_result', JSON.stringify({
+          ...mintResult,
+          verified: verifyData.verified,
+        }));
 
         setProgress(100);
         setStatus('Complete!');
@@ -92,6 +112,7 @@ export default function IdentityMintCreatingPage() {
 
       } catch (err: any) {
         console.error('[Mint] Error:', err);
+        mintStartedRef.current = false; // Allow retry
         setError(err.message || 'Failed to mint NFT. Please try again.');
         setProgress(0);
       }
