@@ -36,7 +36,8 @@ export default function IdentityMintReviewPage() {
 
   const handleMint = () => {
     if (!connected || !publicKey) {
-      alert('Please connect your wallet first');
+      // Redirect to connect wallet
+      router.push('/connect-wallet');
       return;
     }
 

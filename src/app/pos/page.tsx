@@ -2,107 +2,63 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, SegmentedControl, Placeholder } from '@telegram-apps/telegram-ui';
-import { X, CheckCircle2, Clock, XCircle, Plus } from 'lucide-react';
+import { Button, Placeholder } from '@telegram-apps/telegram-ui';
+import { X, CheckCircle2, Plus, ExternalLink } from 'lucide-react';
 import { useWallet } from '@/lib/wallet-mock';
-import { Transaction, TransactionStatus } from '@/types';
-import { PublicKey } from '@solana/web3.js';
-import { getAssociatedTokenAddress } from '@solana/spl-token';
 import styles from './pos.module.css';
 
-const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+interface OnChainTransaction {
+  signature: string;
+  blockTime: number;
+  payer: string;
+  amountUsdc: number;
+  destinationAta: string;
+  slot: number;
+}
 
 export default function POSPage() {
   const router = useRouter();
-  const { publicKey } = useWallet();
-  const [filter, setFilter] = useState<'success' | 'pending' | 'failed'>('success');
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const { publicKey, connected } = useWallet();
+  const [transactions, setTransactions] = useState<OnChainTransaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [merchantAta, setMerchantAta] = useState<string | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Compute merchant USDC ATA when wallet is connected
-  useEffect(() => {
-    const computeAta = async () => {
-      if (!publicKey) {
-        setMerchantAta(null);
-        return;
-      }
-
-      try {
-        const ata = await getAssociatedTokenAddress(
-          publicKey,
-          USDC_MINT
-        );
-        setMerchantAta(ata.toBase58());
-        console.log('[POS] Merchant USDC ATA:', ata.toBase58());
-      } catch (err) {
-        console.error('[POS] Error computing ATA:', err);
-      }
-    };
-
-    computeAta();
-  }, [publicKey]);
-
-  // Fetch transactions from API
-  const fetchTransactions = async (ata: string) => {
+  // Fetch real on-chain transactions
+  const fetchTransactions = async (ownerAddress: string) => {
     try {
-      const res = await fetch(`/api/transactions?merchantAta=${ata}`);
+      console.log('[POS] Fetching transactions for owner:', ownerAddress);
+      const res = await fetch(`/api/transactions?owner=${ownerAddress}`);
       if (!res.ok) {
         throw new Error('Failed to fetch transactions');
       }
 
       const data = await res.json();
-      const apiTransactions = data.transactions || [];
-
-      // Map API response to Transaction format
-      const mappedTransactions: Transaction[] = apiTransactions.map((tx: any) => {
-        // Map status: 'paid' -> 'success', 'declined'/'expired' -> 'failed'
-        let status: 'pending' | 'success' | 'failed' = 'pending';
-        if (tx.status === 'paid') {
-          status = 'success';
-        } else if (tx.status === 'declined' || tx.status === 'expired') {
-          status = 'failed';
-        }
-
-        // Use paidAt if available, otherwise createdAt
-        const timestampSec = tx.paidAt || tx.createdAt;
-        const timestamp = new Date(timestampSec * 1000);
-
-        return {
-          id: tx.id,
-          signature: tx.paidTxSig || '',
-          amount: tx.amountUsd || 0,
-          from: tx.payer || '',
-          to: ata, // Merchant ATA
-          status,
-          timestamp,
-          type: 'invoice',
-        };
-      });
-
-      setTransactions(mappedTransactions);
+      console.log('[POS] Fetched', data.count, 'transactions');
+      setTransactions(data.transactions || []);
       setLoading(false);
     } catch (err) {
       console.error('[POS] Error fetching transactions:', err);
+      setTransactions([]);
       setLoading(false);
     }
   };
 
   // Start polling for transactions
   useEffect(() => {
-    if (!merchantAta) {
+    if (!publicKey) {
       setLoading(false);
       return;
     }
 
-    // Fetch immediately
-    fetchTransactions(merchantAta);
+    const ownerAddress = publicKey.toBase58();
 
-    // Poll every 10 seconds
+    // Fetch immediately
+    fetchTransactions(ownerAddress);
+
+    // Poll every 5 seconds
     pollingIntervalRef.current = setInterval(() => {
-      fetchTransactions(merchantAta);
-    }, 10000);
+      fetchTransactions(ownerAddress);
+    }, 5000);
 
     // Cleanup on unmount
     return () => {
@@ -111,22 +67,20 @@ export default function POSPage() {
         pollingIntervalRef.current = null;
       }
     };
-  }, [merchantAta]);
+  }, [publicKey]);
 
-  const filteredTransactions = transactions.filter(tx => tx.status === filter);
-
-  const groupTransactionsByDate = (txs: Transaction[]) => {
+  const groupTransactionsByDate = (txs: OnChainTransaction[]) => {
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
 
-    const groups: { label: string; transactions: Transaction[] }[] = [];
-    const todayTxs: Transaction[] = [];
-    const yesterdayTxs: Transaction[] = [];
-    const olderTxs: Transaction[] = [];
+    const groups: { label: string; transactions: OnChainTransaction[] }[] = [];
+    const todayTxs: OnChainTransaction[] = [];
+    const yesterdayTxs: OnChainTransaction[] = [];
+    const olderTxs: OnChainTransaction[] = [];
 
     txs.forEach(tx => {
-      const txDate = new Date(tx.timestamp);
+      const txDate = new Date(tx.blockTime * 1000);
       if (txDate.toDateString() === today.toDateString()) {
         todayTxs.push(tx);
       } else if (txDate.toDateString() === yesterday.toDateString()) {
@@ -149,18 +103,11 @@ export default function POSPage() {
     return groups;
   };
 
-  const groups = groupTransactionsByDate(filteredTransactions);
+  const groups = groupTransactionsByDate(transactions);
 
-  const getStatusIcon = (status: TransactionStatus) => {
-    switch (status) {
-      case 'success':
-        return <CheckCircle2 size={20} strokeWidth={2} className={styles.iconSuccess} />;
-      case 'pending':
-        return <Clock size={20} strokeWidth={2} className={styles.iconPending} />;
-      case 'failed':
-      case 'declined':
-        return <XCircle size={20} strokeWidth={2} className={styles.iconFailed} />;
-    }
+  const formatPayer = (payer: string) => {
+    if (!payer || payer === 'unknown') return 'Unknown';
+    return `${payer.slice(0, 4)}...${payer.slice(-4)}`;
   };
 
   return (
@@ -172,51 +119,30 @@ export default function POSPage() {
         <h1 className={styles.title}>POS Mode</h1>
       </div>
 
-      <div className={styles.filters}>
-        <SegmentedControl>
-          <SegmentedControl.Item
-            selected={filter === 'success'}
-            onClick={() => setFilter('success')}
-          >
-            Success
-          </SegmentedControl.Item>
-          <SegmentedControl.Item
-            selected={filter === 'pending'}
-            onClick={() => setFilter('pending')}
-          >
-            Pending
-          </SegmentedControl.Item>
-          <SegmentedControl.Item
-            selected={filter === 'failed'}
-            onClick={() => setFilter('failed')}
-          >
-            Failed
-          </SegmentedControl.Item>
-        </SegmentedControl>
-      </div>
+      {/* Removed filter tabs - show all transactions */}
 
       <div className={styles.content}>
         {loading ? (
           <div className={styles.empty}>
             <Placeholder
-              header="Loading transactions..."
-              description="Fetching your payment history"
+              header="Loading..."
+              description="Fetching transactions from chain"
             >
-              <Clock size={48} strokeWidth={2} style={{ opacity: 0.5 }} />
             </Placeholder>
           </div>
-        ) : !publicKey ? (
+        ) : !connected || !publicKey ? (
           <div className={styles.empty}>
             <Placeholder
               header="Wallet not connected"
-              description="Please connect your wallet to view transactions"
+              description="Connect your wallet to view transactions"
             >
-              <X size={48} strokeWidth={2} style={{ opacity: 0.5 }} />
             </Placeholder>
           </div>
-        ) : groups.length === 0 ? (
+        ) : transactions.length === 0 ? (
           <div className={styles.empty}>
-            <p>No {filter} transactions</p>
+            <p style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>
+              No transactions yet
+            </p>
           </div>
         ) : (
           groups.map(group => (
@@ -224,21 +150,32 @@ export default function POSPage() {
               <div className={styles.groupHeader}>{group.label}</div>
               <div className={styles.list}>
                 {group.transactions.map(tx => (
-                  <div key={tx.id} className={styles.transaction}>
+                  <div key={tx.signature} className={styles.transaction}>
                     <div className={styles.transactionIcon}>
-                      {getStatusIcon(tx.status)}
+                      <CheckCircle2 size={20} strokeWidth={2} className={styles.iconSuccess} />
                     </div>
                     <div className={styles.transactionContent}>
-                      <div className={styles.transactionFrom}>From {tx.from}</div>
+                      <div className={styles.transactionFrom}>
+                        From {formatPayer(tx.payer)}
+                      </div>
                       <div className={styles.transactionTime}>
-                        {new Date(tx.timestamp).toLocaleTimeString('en-US', {
+                        {new Date(tx.blockTime * 1000).toLocaleTimeString('en-US', {
                           hour: '2-digit',
                           minute: '2-digit',
                         })}
                       </div>
                     </div>
                     <div className={styles.transactionAmount}>
-                      ${tx.amount.toFixed(2)}
+                      <span>${tx.amountUsdc.toFixed(2)}</span>
+                      <a
+                        href={`https://solscan.io/tx/${tx.signature}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ marginLeft: '4px', color: 'var(--accent)' }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <ExternalLink size={14} />
+                      </a>
                     </div>
                   </div>
                 ))}

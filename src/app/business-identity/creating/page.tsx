@@ -2,91 +2,68 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useConnection, useWallet } from '@/lib/wallet-mock';
+import { useWallet } from '@/lib/wallet-mock';
 import { Button } from '@telegram-apps/telegram-ui';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { mintBusinessNFT, generateMockMintAddress } from '@/lib/nft';
+import { saveBusiness } from '@/lib/storage';
+import { Business } from '@/types';
 import styles from './creating.module.css';
 
 export default function BusinessIdentityCreatingPage() {
   const router = useRouter();
-  const { connection } = useConnection();
   const wallet = useWallet();
   const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState('Preparing...');
+  const [status, setStatus] = useState('Saving your profile...');
   const [cancelled, setCancelled] = useState(false);
 
   useEffect(() => {
     if (cancelled) return;
 
-    const steps = [
-      { text: 'Preparing metadata...', duration: 1000 },
-      { text: 'Creating NFT...', duration: 2000 },
-      { text: 'Finalizing...', duration: 1000 },
-    ];
+    const createBusinessProfile = async () => {
+      const name = sessionStorage.getItem('business_name');
+      const logoData = sessionStorage.getItem('business_logo');
 
-    let currentStep = 0;
-    let progressValue = 0;
-
-    const runSteps = async () => {
-      for (const step of steps) {
-        if (cancelled) return;
-
-        setStatus(step.text);
-        const increment = 100 / steps.length;
-        const stepStart = progressValue;
-        const stepEnd = Math.min(progressValue + increment, 100);
-
-        const startTime = Date.now();
-        const animate = () => {
-          if (cancelled) return;
-
-          const elapsed = Date.now() - startTime;
-          const stepProgress = Math.min(elapsed / step.duration, 1);
-          const currentProgress = stepStart + (stepEnd - stepStart) * stepProgress;
-
-          setProgress(currentProgress);
-
-          if (stepProgress < 1) {
-            requestAnimationFrame(animate);
-          }
-        };
-
-        animate();
-        await new Promise(resolve => setTimeout(resolve, step.duration));
-        progressValue = stepEnd;
-        currentStep++;
+      if (!name) {
+        router.replace('/business-identity/name');
+        return;
       }
 
+      // Simulate progress for better UX
+      setProgress(30);
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      if (cancelled) return;
+
+      setProgress(70);
+
+      // Create and save business profile (WITHOUT NFT)
+      const business: Business = {
+        id: crypto.randomUUID(),
+        name,
+        logo: logoData || undefined,
+        walletAddress: wallet.publicKey?.toBase58() || 'not-connected',
+        nftMintAddress: undefined, // No NFT minting in initial setup
+        createdAt: new Date(),
+      };
+
+      saveBusiness(business);
+
+      setProgress(100);
+      setStatus('Complete!');
+
+      // Clear session storage
+      sessionStorage.removeItem('business_name');
+      sessionStorage.removeItem('business_logo');
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       if (!cancelled) {
-        const name = sessionStorage.getItem('business_name') || 'Business';
-
-        let mintAddress: string | null = null;
-
-        if (wallet.connected && wallet.publicKey) {
-          mintAddress = await mintBusinessNFT({
-            connection,
-            wallet,
-            name,
-          });
-        }
-
-        if (!mintAddress) {
-          mintAddress = generateMockMintAddress();
-        }
-
-        sessionStorage.setItem('nft_mint_address', mintAddress);
-        setProgress(100);
-        setStatus('Complete!');
-
-        setTimeout(() => {
-          router.push('/business-identity/success');
-        }, 500);
+        router.push('/dashboard');
       }
     };
 
-    runSteps();
-  }, [cancelled, connection, wallet, router]);
+    createBusinessProfile();
+  }, [cancelled, wallet, router]);
 
   const handleCancel = () => {
     setCancelled(true);
@@ -98,7 +75,7 @@ export default function BusinessIdentityCreatingPage() {
       <div className={styles.content}>
         <LoadingSpinner size={64} />
 
-        <h2 className={styles.title}>Creating business identity</h2>
+        <h2 className={styles.title}>Creating business profile</h2>
 
         <div className={styles.progressContainer}>
           <div className={styles.progressBar}>
@@ -114,8 +91,7 @@ export default function BusinessIdentityCreatingPage() {
 
         <div className={styles.info}>
           <p className={styles.infoText}>
-            Your business identity is being minted as an NFT on Solana.
-            This process may take a minute.
+            Your business profile is being created. You can optionally mint an identity NFT later from the dashboard.
           </p>
         </div>
       </div>

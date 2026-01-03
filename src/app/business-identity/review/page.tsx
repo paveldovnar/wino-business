@@ -58,18 +58,12 @@ export default function BusinessIdentityReviewPage() {
               <span className={styles.detailLabel}>Business name</span>
               <span className={styles.detailValue}>{businessName}</span>
             </div>
-
-            <div className={styles.detailRow}>
-              <span className={styles.detailLabel}>Identity type</span>
-              <span className={styles.detailValue}>NFT on Solana</span>
-            </div>
           </div>
         </div>
 
         <div className={styles.infoBox}>
           <p className={styles.infoText}>
-            Your business identity will be minted as an NFT on the Solana blockchain.
-            This ensures immutability and ownership verification.
+            Your business profile will be saved locally. You can optionally mint a Business Identity NFT from the dashboard later.
           </p>
         </div>
       </div>

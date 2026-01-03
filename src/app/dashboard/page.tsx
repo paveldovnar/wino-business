@@ -1,26 +1,22 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@telegram-apps/telegram-ui';
-import { Building2, DollarSign, Shield, CheckCircle2, LogOut } from 'lucide-react';
-import { getBusiness, saveBusiness } from '@/lib/storage';
+import { Building2, DollarSign, Shield, CheckCircle2, LogOut, Bug } from 'lucide-react';
+import { getBusiness, saveBusiness, clearBusiness } from '@/lib/storage';
 import { useWallet } from '@/lib/wallet-mock';
+import { saveWalletState, clearWalletState, shouldExpectReconnect } from '@/lib/wallet-persistence';
 import { Business } from '@/types';
-import { PublicKey } from '@solana/web3.js';
-import { getAssociatedTokenAddress } from '@solana/spl-token';
 import styles from './dashboard.module.css';
 
-const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
-
-interface ApiTransaction {
-  id: string;
-  status: 'pending' | 'paid' | 'declined';
-  amountUsd: number;
-  createdAt: number; // unix timestamp in seconds
-  paidAt?: number; // unix timestamp in seconds
-  paidTxSig?: string;
-  payer?: string;
+interface OnChainTransaction {
+  signature: string;
+  blockTime: number;
+  payer: string;
+  amountUsdc: number;
+  destinationAta: string;
+  slot: number;
 }
 
 interface DashboardMetrics {
@@ -28,16 +24,16 @@ interface DashboardMetrics {
   incomeToday: number;
   incomeLast30Days: number;
   averageDay: number;
-  todayVsAverage: number; // percentage
+  todayVsAverage: number;
   lastUpdate: Date | null;
 }
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { publicKey, disconnect } = useWallet();
+  const { publicKey, disconnect, connected, connecting } = useWallet();
   const [business, setBusiness] = useState<Business | null>(null);
-  const [merchantAta, setMerchantAta] = useState<string | null>(null);
-  const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
+  const [transactions, setTransactions] = useState<OnChainTransaction[]>([]);
+  const [realBalance, setRealBalance] = useState<number | null>(null);
   const [metrics, setMetrics] = useState<DashboardMetrics>({
     totalBalance: 0,
     incomeToday: 0,
@@ -49,68 +45,112 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [mintVerified, setMintVerified] = useState<boolean | null>(null);
   const [verifying, setVerifying] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+  const [walletRestoring, setWalletRestoring] = useState(true);
 
-  // Compute merchant USDC ATA
+  // Check if we should wait for wallet to restore
   useEffect(() => {
-    async function computeAta() {
-      if (!publicKey) {
-        setMerchantAta(null);
-        return;
-      }
+    const shouldWait = shouldExpectReconnect();
+    console.log('[dashboard] Should expect wallet reconnect:', shouldWait);
 
-      try {
-        const ata = await getAssociatedTokenAddress(publicKey, USDC_MINT);
-        setMerchantAta(ata.toBase58());
-        console.log('[dashboard] Merchant USDC ATA:', ata.toBase58());
-      } catch (err) {
-        console.error('[dashboard] Failed to compute ATA:', err);
-        setMerchantAta(null);
+    if (!shouldWait) {
+      // No previous session, no need to wait
+      setWalletRestoring(false);
+    } else {
+      // Give wallet adapter time to restore session
+      const timeout = setTimeout(() => {
+        console.log('[dashboard] Wallet restore timeout reached');
+        setWalletRestoring(false);
+      }, 3000); // 3 second max wait
+
+      return () => clearTimeout(timeout);
+    }
+  }, []);
+
+  // Update wallet restoring state when connection completes
+  useEffect(() => {
+    if (connected && publicKey) {
+      console.log('[dashboard] Wallet connected:', publicKey.toBase58());
+      setWalletRestoring(false);
+
+      // Save wallet state for persistence
+      saveWalletState({
+        wasConnected: true,
+        lastAddress: publicKey.toBase58(),
+        lastConnectedAt: Date.now(),
+      });
+    } else if (!connecting && !connected) {
+      // Not connecting and not connected - done waiting
+      const shouldWait = shouldExpectReconnect();
+      if (!shouldWait) {
+        setWalletRestoring(false);
       }
     }
+  }, [connected, publicKey, connecting]);
 
-    computeAta();
-  }, [publicKey]);
-
-  // Fetch transactions from API
+  // Fetch real balance and transactions
   useEffect(() => {
-    async function fetchTransactions() {
-      if (!merchantAta) {
+    async function fetchData() {
+      if (!publicKey) {
         setTransactions([]);
+        setRealBalance(null);
         setLoading(false);
         return;
       }
 
       try {
         setLoading(true);
-        console.log('[dashboard] Fetching transactions for ATA:', merchantAta);
+        const ownerAddress = publicKey.toBase58();
+        console.log('[dashboard] Fetching data for owner:', ownerAddress);
 
-        const res = await fetch(`/api/transactions?merchantAta=${merchantAta}`);
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        // Fetch balance and transactions in parallel
+        const [balanceRes, txRes] = await Promise.all([
+          fetch(`/api/balance?owner=${ownerAddress}`),
+          fetch(`/api/transactions?owner=${ownerAddress}`),
+        ]);
+
+        if (balanceRes.ok) {
+          const balanceData = await balanceRes.json();
+          setRealBalance(balanceData.uiAmount ?? 0);
+          console.log('[dashboard] Real balance:', balanceData.uiAmount);
         }
 
-        const data = await res.json();
-        console.log('[dashboard] Fetched transactions:', data.count);
-
-        setTransactions(data.transactions || []);
+        if (txRes.ok) {
+          const txData = await txRes.json();
+          setTransactions(txData.transactions || []);
+          console.log('[dashboard] Fetched', txData.count, 'transactions');
+        }
       } catch (err) {
-        console.error('[dashboard] Failed to fetch transactions:', err);
+        console.error('[dashboard] Failed to fetch data:', err);
         setTransactions([]);
+        setRealBalance(null);
       } finally {
         setLoading(false);
       }
     }
 
-    fetchTransactions();
+    fetchData();
 
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchTransactions, 30000);
+    // Refresh every 10 seconds
+    const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
-  }, [merchantAta]);
+  }, [publicKey]);
 
   // Calculate metrics from transactions
   useEffect(() => {
-    const now = Date.now() / 1000; // current time in seconds
+    if (transactions.length === 0) {
+      setMetrics({
+        totalBalance: realBalance ?? 0,
+        incomeToday: 0,
+        incomeLast30Days: 0,
+        averageDay: 0,
+        todayVsAverage: 0,
+        lastUpdate: null,
+      });
+      return;
+    }
+
+    const now = Date.now() / 1000;
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayStartSec = todayStart.getTime() / 1000;
@@ -118,50 +158,48 @@ export default function DashboardPage() {
     const last30DaysStart = now - 30 * 24 * 60 * 60;
     const last90DaysStart = now - 90 * 24 * 60 * 60;
 
-    // Filter paid transactions only
-    const paidTxs = transactions.filter((tx) => tx.status === 'paid' && tx.paidAt);
-
-    // Total balance (all paid)
-    const totalBalance = paidTxs.reduce((sum, tx) => sum + tx.amountUsd, 0);
-
     // Income today
-    const incomeToday = paidTxs
-      .filter((tx) => tx.paidAt! >= todayStartSec)
-      .reduce((sum, tx) => sum + tx.amountUsd, 0);
+    const incomeToday = transactions
+      .filter((tx) => tx.blockTime >= todayStartSec)
+      .reduce((sum, tx) => sum + tx.amountUsdc, 0);
 
     // Income last 30 days
-    const incomeLast30Days = paidTxs
-      .filter((tx) => tx.paidAt! >= last30DaysStart)
-      .reduce((sum, tx) => sum + tx.amountUsd, 0);
+    const incomeLast30Days = transactions
+      .filter((tx) => tx.blockTime >= last30DaysStart)
+      .reduce((sum, tx) => sum + tx.amountUsdc, 0);
 
     // Calculate average day (last 90 days)
-    const last90DaysTxs = paidTxs.filter((tx) => tx.paidAt! >= last90DaysStart);
-    const last90DaysIncome = last90DaysTxs.reduce((sum, tx) => sum + tx.amountUsd, 0);
+    const last90DaysTxs = transactions.filter((tx) => tx.blockTime >= last90DaysStart);
+    const last90DaysIncome = last90DaysTxs.reduce((sum, tx) => sum + tx.amountUsdc, 0);
     const averageDay = last90DaysIncome / 90;
 
     // Today vs average
     const todayVsAverage = averageDay > 0 ? ((incomeToday - averageDay) / averageDay) * 100 : 0;
 
     // Last update time
-    const lastUpdate = paidTxs.length > 0
-      ? new Date(Math.max(...paidTxs.map((tx) => tx.paidAt! * 1000)))
+    const lastUpdate = transactions.length > 0
+      ? new Date(Math.max(...transactions.map((tx) => tx.blockTime * 1000)))
       : null;
 
     setMetrics({
-      totalBalance,
+      totalBalance: realBalance ?? 0,
       incomeToday,
       incomeLast30Days,
       averageDay,
       todayVsAverage,
       lastUpdate,
     });
-  }, [transactions]);
+  }, [transactions, realBalance]);
 
-  // Load business and verify NFT
+  // Load business profile
   useEffect(() => {
     const businessData = getBusiness();
     if (!businessData) {
-      router.replace('/welcome');
+      // Only redirect if we're not waiting for wallet and wallet didn't connect
+      if (!walletRestoring) {
+        console.log('[dashboard] No business profile, redirecting to welcome');
+        router.replace('/welcome');
+      }
       return;
     }
 
@@ -171,7 +209,7 @@ export default function DashboardPage() {
     if (businessData.nftMintAddress) {
       verifyMintStatus(businessData.nftMintAddress);
     }
-  }, [router]);
+  }, [router, walletRestoring]);
 
   const verifyMintStatus = async (mintAddress: string) => {
     setVerifying(true);
@@ -199,6 +237,7 @@ export default function DashboardPage() {
     if (confirm('Disconnect wallet? Your business profile will remain saved.')) {
       try {
         await disconnect();
+        clearWalletState();
         console.log('[dashboard] Wallet disconnected');
         router.push('/welcome');
       } catch (err) {
@@ -207,11 +246,23 @@ export default function DashboardPage() {
     }
   };
 
+  // Show loading while waiting for wallet to restore
+  if (walletRestoring) {
+    return (
+      <div className={styles.container}>
+        <div className={styles.content} style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '50vh' }}>
+          <p style={{ color: 'var(--text-secondary)' }}>Restoring wallet session...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!business) {
     return null;
   }
 
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: number | null) => {
+    if (amount === null) return '—';
     return amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
@@ -238,12 +289,43 @@ export default function DashboardPage() {
             <p className={styles.businessType}>Business merchant</p>
           </div>
         </div>
-        {publicKey && (
-          <button onClick={handleDisconnect} className={styles.walletButton} title="Disconnect wallet">
-            <LogOut size={20} strokeWidth={2} />
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={() => setShowDebug(!showDebug)}
+            className={styles.walletButton}
+            title="Toggle debug info"
+            style={{ opacity: 0.5 }}
+          >
+            <Bug size={20} strokeWidth={2} />
           </button>
-        )}
+          {publicKey && (
+            <button onClick={handleDisconnect} className={styles.walletButton} title="Disconnect wallet">
+              <LogOut size={20} strokeWidth={2} />
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Debug Panel */}
+      {showDebug && (
+        <div style={{
+          margin: '12px 16px',
+          padding: '12px',
+          background: 'rgba(0,0,0,0.05)',
+          borderRadius: '8px',
+          fontSize: '11px',
+          fontFamily: 'monospace',
+        }}>
+          <div><strong>Debug Info:</strong></div>
+          <div>connected: {String(connected)}</div>
+          <div>connecting: {String(connecting)}</div>
+          <div>publicKey: {publicKey ? publicKey.toBase58() : 'null'}</div>
+          <div>walletRestoring: {String(walletRestoring)}</div>
+          <div>realBalance: {realBalance}</div>
+          <div>txCount: {transactions.length}</div>
+          <div>network: mainnet-beta</div>
+        </div>
+      )}
 
       <div className={styles.content}>
         {/* Balance Card */}
@@ -256,8 +338,12 @@ export default function DashboardPage() {
             ${loading ? '—' : formatCurrency(metrics.totalBalance)}
           </div>
           <div className={styles.balanceSubtext}>
-            {metrics.lastUpdate
+            {!connected || !publicKey
+              ? 'Connect wallet to see balance'
+              : metrics.lastUpdate
               ? `Last updated ${metrics.lastUpdate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+              : realBalance === 0
+              ? 'No USDC received yet'
               : 'No transactions yet'}
           </div>
         </div>
@@ -367,7 +453,6 @@ export default function DashboardPage() {
                 size="m"
                 mode="outline"
                 onClick={() => {
-                  // Clear failed mint address to allow retry
                   const updatedBusiness = { ...business, nftMintAddress: undefined };
                   saveBusiness(updatedBusiness);
                   router.push('/identity/mint/review');
@@ -377,6 +462,15 @@ export default function DashboardPage() {
                 Retry mint
               </Button>
             </div>
+          ) : !connected || !publicKey ? (
+            <Button
+              size="m"
+              mode="outline"
+              disabled
+              className={styles.mintButton}
+            >
+              Connect wallet to mint NFT
+            </Button>
           ) : (
             <Button
               size="m"

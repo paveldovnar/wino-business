@@ -114,10 +114,10 @@ export default function InvoiceScanPage() {
   }, [publicKey, router]);
 
   const startStatusPolling = (id: string) => {
-    // Poll every 1.5 seconds
+    // Poll every 2 seconds for on-chain payment detection
     pollingIntervalRef.current = setInterval(() => {
       checkInvoiceStatus(id);
-    }, 1500);
+    }, 2000);
 
     // Check immediately
     checkInvoiceStatus(id);
@@ -136,6 +136,28 @@ export default function InvoiceScanPage() {
 
   const checkInvoiceStatus = async (id: string) => {
     try {
+      // First, poll for on-chain payment
+      const pollRes = await fetch(`/api/invoices/${id}/poll`, {
+        method: 'POST',
+      });
+
+      if (pollRes.ok) {
+        const pollData = await pollRes.json();
+
+        if (pollData.status === 'paid') {
+          setInvoiceStatus('paid');
+          if (pollData.paidTxSig) {
+            setPaidTxSig(pollData.paidTxSig);
+          }
+          if (pollData.payer) {
+            setPayer(pollData.payer);
+          }
+          stopPolling();
+          return;
+        }
+      }
+
+      // Then fetch invoice to get expiry and other details
       const res = await fetch(`/api/invoices/${id}`);
       if (!res.ok) return;
 

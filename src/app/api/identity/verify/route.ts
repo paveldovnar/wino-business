@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { Metaplex } from '@metaplex-foundation/js';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/identity/verify
  * Verify that an NFT mint exists on-chain

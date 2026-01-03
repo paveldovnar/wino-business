@@ -5,6 +5,8 @@ import {
   getPendingInvoices,
 } from '@/server/storage/invoicesStore';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/debug/invoice-match
  * Debug endpoint to test invoice matching logic

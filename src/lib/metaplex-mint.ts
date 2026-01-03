@@ -28,23 +28,32 @@ export async function mintBusinessIdentityNFT({
     throw new Error('Wallet not connected or does not support transaction signing');
   }
 
+  if (!wallet.connected) {
+    throw new Error('Wallet not connected. Please reconnect your wallet and try again.');
+  }
+
   try {
     console.log('[Metaplex] Starting NFT mint for:', businessName);
     console.log('[Metaplex] Wallet:', wallet.publicKey.toBase58());
+    console.log('[Metaplex] Wallet connected:', wallet.connected);
 
-    // Initialize Metaplex instance
+    // Initialize Metaplex instance with timeout handling
     const metaplex = Metaplex.make(connection)
       .use(walletAdapterIdentity(wallet));
 
     console.log('[Metaplex] Metaplex instance created');
 
-    // Prepare metadata
+    // Prepare metadata with required identity_type
     const metadata = {
       name: `${businessName} - Wino Business`,
       symbol: 'WINO',
       description: `Business Identity NFT for ${businessName}. Created with Wino Business app.`,
-      image: logo || 'https://arweave.net/placeholder', // TODO: Upload to Arweave
+      image: logo || 'https://arweave.net/placeholder',
       attributes: [
+        {
+          trait_type: 'identity_type',
+          value: 'business',
+        },
         {
           trait_type: 'Business Name',
           value: businessName,

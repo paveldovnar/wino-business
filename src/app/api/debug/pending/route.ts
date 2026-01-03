@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPendingInvoiceByMerchantAta } from '@/server/storage/invoicesStore';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/debug/pending
  * Debug endpoint to check pending invoice for a merchant ATA
