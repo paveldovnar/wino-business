@@ -1,111 +1,271 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { useWallet } from '@/lib/wallet-mock';
+import { useWallet, useConnection } from '@/lib/wallet-mock';
 import { Button } from '@telegram-apps/telegram-ui';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { AlertCircle, CheckCircle2, Send, Upload, FileCheck } from 'lucide-react';
+import { buildCreateIdentityTransaction, deriveIdentityPDA, getSolscanLink } from '@/lib/identity-pda';
 import { saveBusiness } from '@/lib/storage';
 import { Business } from '@/types';
 import styles from './creating.module.css';
 
+type CreationStep = 'building' | 'signing' | 'confirming' | 'success' | 'error';
+
+interface StepInfo {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}
+
+const STEP_INFO: Record<CreationStep, StepInfo> = {
+  building: {
+    icon: <Upload size={32} strokeWidth={2} />,
+    title: 'Building transaction',
+    description: 'Preparing your identity transaction...',
+  },
+  signing: {
+    icon: <Send size={32} strokeWidth={2} />,
+    title: 'Sign transaction',
+    description: 'Please approve the transaction in your wallet',
+  },
+  confirming: {
+    icon: <FileCheck size={32} strokeWidth={2} />,
+    title: 'Confirming on-chain',
+    description: 'Waiting for Solana network confirmation...',
+  },
+  success: {
+    icon: <CheckCircle2 size={32} strokeWidth={2} />,
+    title: 'Identity created!',
+    description: 'Your business identity is now on-chain',
+  },
+  error: {
+    icon: <AlertCircle size={32} strokeWidth={2} />,
+    title: 'Creation failed',
+    description: 'Something went wrong. Please try again.',
+  },
+};
+
 export default function BusinessIdentityCreatingPage() {
   const router = useRouter();
-  const wallet = useWallet();
-  const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState('Saving your profile...');
-  const [cancelled, setCancelled] = useState(false);
+  const { publicKey, signTransaction, connected } = useWallet();
+  const { connection } = useConnection();
+  const [step, setStep] = useState<CreationStep>('building');
+  const [error, setError] = useState<string | null>(null);
+  const [txSignature, setTxSignature] = useState<string | null>(null);
+  const [identityPda, setIdentityPda] = useState<string | null>(null);
+  const hasStarted = useRef(false);
 
-  useEffect(() => {
-    if (cancelled) return;
+  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'devnet') as 'devnet' | 'mainnet-beta';
 
-    const createBusinessProfile = async () => {
-      const name = sessionStorage.getItem('business_name');
-      const logoData = sessionStorage.getItem('business_logo');
+  const createIdentity = useCallback(async () => {
+    if (!publicKey || !signTransaction || !connection) {
+      setError('Wallet not connected or signing not available');
+      setStep('error');
+      return;
+    }
 
-      if (!name) {
-        router.replace('/business-identity/name');
+    const walletAddress = publicKey.toBase58();
+    const name = sessionStorage.getItem('business_name');
+    const logoData = sessionStorage.getItem('business_logo');
+
+    if (!name) {
+      router.replace('/business-identity/name');
+      return;
+    }
+
+    // For now, use empty logo_uri or upload to Arweave separately
+    // In production, you'd upload logo to Irys/Arweave first
+    let logoUri = '';
+    if (logoData) {
+      // TODO: Upload logo to Irys/Arweave and get URI
+      // For now, we'll skip logo upload and just store empty string
+      console.log('[creating] Logo data present but skipping upload for now');
+    }
+
+    try {
+      // Step 1: Build transaction
+      setStep('building');
+      console.log('[creating] Building create_identity transaction...');
+
+      const [pda] = deriveIdentityPDA(publicKey);
+      setIdentityPda(pda.toBase58());
+
+      const transaction = await buildCreateIdentityTransaction(
+        connection,
+        publicKey,
+        name,
+        logoUri
+      );
+
+      console.log('[creating] Transaction built, PDA:', pda.toBase58());
+
+      // Step 2: Sign transaction
+      setStep('signing');
+      console.log('[creating] Requesting wallet signature...');
+
+      let signedTx;
+      try {
+        signedTx = await signTransaction(transaction);
+        console.log('[creating] Transaction signed');
+      } catch (signError: any) {
+        console.error('[creating] Signature rejected:', signError);
+        setError('Transaction was rejected. Please try again.');
+        setStep('error');
         return;
       }
 
-      // Simulate progress for better UX
-      setProgress(30);
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Step 3: Send and confirm
+      setStep('confirming');
+      console.log('[creating] Sending transaction...');
 
-      if (cancelled) return;
+      const signature = await connection.sendRawTransaction(signedTx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+      });
 
-      setProgress(70);
+      setTxSignature(signature);
+      console.log('[creating] Transaction sent:', signature);
 
-      // Create and save business profile (WITHOUT NFT)
+      // Wait for confirmation
+      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+
+      if (confirmation.value.err) {
+        console.error('[creating] Transaction failed:', confirmation.value.err);
+        setError('Transaction failed on-chain. Please try again.');
+        setStep('error');
+        return;
+      }
+
+      console.log('[creating] Transaction confirmed!');
+
+      // Step 4: Success
+      setStep('success');
+
       const business: Business = {
         id: crypto.randomUUID(),
         name,
         logo: logoData || undefined,
-        walletAddress: wallet.publicKey?.toBase58() || 'not-connected',
-        nftMintAddress: undefined, // No NFT minting in initial setup
+        logoUri: logoUri || undefined,
+        walletAddress,
+        identityPda: pda.toBase58(),
+        identityTxSignature: signature,
         createdAt: new Date(),
       };
 
       saveBusiness(business);
 
-      setProgress(100);
-      setStatus('Complete!');
+      // Store for success page
+      sessionStorage.setItem('identity_pda', pda.toBase58());
+      sessionStorage.setItem('identity_tx_signature', signature);
 
-      // Clear session storage
-      sessionStorage.removeItem('business_name');
-      sessionStorage.removeItem('business_logo');
+      // Redirect to success after a brief moment
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      router.push('/business-identity/success');
 
-      await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (err: any) {
+      console.error('[creating] Unexpected error:', err);
+      setError(err.message || 'An unexpected error occurred');
+      setStep('error');
+    }
+  }, [publicKey, signTransaction, connection, router]);
 
-      if (!cancelled) {
-        router.push('/dashboard');
-      }
-    };
+  useEffect(() => {
+    if (hasStarted.current) return;
+    if (!connected || !publicKey) {
+      router.replace('/connect-wallet');
+      return;
+    }
 
-    createBusinessProfile();
-  }, [cancelled, wallet, router]);
+    hasStarted.current = true;
+    createIdentity();
+  }, [connected, publicKey, createIdentity, router]);
+
+  const handleRetry = () => {
+    setError(null);
+    setStep('building');
+    hasStarted.current = false;
+    createIdentity();
+  };
 
   const handleCancel = () => {
-    setCancelled(true);
-    router.back();
+    router.push('/business-identity/review');
   };
+
+  const currentStep = STEP_INFO[step];
+  const isError = step === 'error';
+  const isSuccess = step === 'success';
 
   return (
     <div className={styles.container}>
       <div className={styles.content}>
-        <LoadingSpinner size={64} />
-
-        <h2 className={styles.title}>Creating business profile</h2>
-
-        <div className={styles.progressContainer}>
-          <div className={styles.progressBar}>
-            <div
-              className={styles.progressFill}
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <span className={styles.progressText}>{Math.round(progress)}%</span>
+        <div className={`${styles.iconWrapper} ${isError ? styles.iconError : ''} ${isSuccess ? styles.iconSuccess : ''}`}>
+          {step === 'building' || step === 'signing' || step === 'confirming' ? (
+            <LoadingSpinner size={64} />
+          ) : (
+            currentStep.icon
+          )}
         </div>
 
-        <p className={styles.status}>{status}</p>
+        <h2 className={styles.title}>{currentStep.title}</h2>
+        <p className={styles.status}>{error || currentStep.description}</p>
 
-        <div className={styles.info}>
-          <p className={styles.infoText}>
-            Your business profile is being created. You can optionally mint an identity NFT later from the dashboard.
-          </p>
+        {txSignature && !isError && (
+          <div className={styles.txInfo}>
+            <span className={styles.txLabel}>Transaction:</span>
+            <a
+              href={getSolscanLink(txSignature, cluster)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.txLink}
+            >
+              {txSignature.slice(0, 8)}...{txSignature.slice(-8)}
+            </a>
+          </div>
+        )}
+
+        {identityPda && !isError && (
+          <div className={styles.txInfo}>
+            <span className={styles.txLabel}>Identity PDA:</span>
+            <span className={styles.txLink}>
+              {identityPda.slice(0, 8)}...{identityPda.slice(-8)}
+            </span>
+          </div>
+        )}
+
+        <div className={styles.steps}>
+          <StepIndicator label="Build" active={step === 'building'} completed={['signing', 'confirming', 'success'].includes(step)} />
+          <StepIndicator label="Sign" active={step === 'signing'} completed={['confirming', 'success'].includes(step)} />
+          <StepIndicator label="Confirm" active={step === 'confirming'} completed={step === 'success'} />
         </div>
       </div>
 
       <div className={styles.actions}>
-        <Button
-          size="l"
-          stretched
-          mode="outline"
-          onClick={handleCancel}
-        >
-          Cancel
-        </Button>
+        {isError ? (
+          <>
+            <Button size="l" stretched onClick={handleRetry}>
+              Try again
+            </Button>
+            <Button size="l" stretched mode="outline" onClick={handleCancel}>
+              Back
+            </Button>
+          </>
+        ) : !isSuccess ? (
+          <Button size="l" stretched mode="outline" onClick={handleCancel}>
+            Cancel
+          </Button>
+        ) : null}
       </div>
+    </div>
+  );
+}
+
+function StepIndicator({ label, active, completed }: { label: string; active: boolean; completed: boolean }) {
+  return (
+    <div className={`${styles.stepIndicator} ${active ? styles.stepActive : ''} ${completed ? styles.stepCompleted : ''}`}>
+      <div className={styles.stepDot} />
+      <span className={styles.stepLabel}>{label}</span>
     </div>
   );
 }

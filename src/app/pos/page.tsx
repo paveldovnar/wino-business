@@ -3,16 +3,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Placeholder } from '@telegram-apps/telegram-ui';
-import { X, CheckCircle2, Plus, ExternalLink, LogOut } from 'lucide-react';
+import { X, CheckCircle2, Plus, ExternalLink, LogOut, Wallet } from 'lucide-react';
 import { useWallet } from '@/lib/wallet-mock';
-import { fullWalletLogout } from '@/lib/wallet-persistence';
+import { fullWalletLogout, clearWalletState } from '@/lib/wallet-persistence';
 import styles from './pos.module.css';
 
 interface OnChainTransaction {
   signature: string;
   blockTime: number | null;
   source: string | null;
-  amountUi: number | null;
+  amountUi: number | null | undefined;
   destination: string | null;
   status: string;
   explorerUrl: string;
@@ -20,7 +20,12 @@ interface OnChainTransaction {
 
 export default function POSPage() {
   const router = useRouter();
-  const { publicKey, connected, disconnect } = useWallet();
+  const { publicKey, connected, connecting, disconnect } = useWallet();
+
+  // All hooks must be declared before any early returns
+  const [transactions, setTransactions] = useState<OnChainTransaction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Full logout handler
   const handleLogout = useCallback(async () => {
@@ -31,14 +36,12 @@ export default function POSPage() {
       console.warn('[POS] Disconnect failed:', err);
     }
     fullWalletLogout();
+    clearWalletState();
     router.push('/connect-wallet');
   }, [disconnect, router]);
-  const [transactions, setTransactions] = useState<OnChainTransaction[]>([]);
-  const [loading, setLoading] = useState(true);
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fetch real on-chain transactions
-  const fetchTransactions = async (ownerAddress: string) => {
+  const fetchTransactions = useCallback(async (ownerAddress: string) => {
     try {
       console.log('[POS] Fetching transactions for owner:', ownerAddress);
       const res = await fetch(`/api/transactions?owner=${ownerAddress}`);
@@ -55,7 +58,7 @@ export default function POSPage() {
       setTransactions([]);
       setLoading(false);
     }
-  };
+  }, []);
 
   // Start polling for transactions
   useEffect(() => {
@@ -81,7 +84,7 @@ export default function POSPage() {
         pollingIntervalRef.current = null;
       }
     };
-  }, [publicKey]);
+  }, [publicKey, fetchTransactions]);
 
   const groupTransactionsByDate = (txs: OnChainTransaction[]) => {
     const today = new Date();
@@ -128,9 +131,13 @@ export default function POSPage() {
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
   };
 
-  const formatAmount = (amount: number | null) => {
-    if (amount === null || amount === undefined) return '—';
-    return `$${amount.toFixed(2)}`;
+  const formatAmount = (amount: number | null | undefined) => {
+    if (amount === null || amount === undefined || isNaN(amount)) return '—';
+    try {
+      return `$${Number(amount).toFixed(2)}`;
+    } catch {
+      return '—';
+    }
   };
 
   const formatTime = (blockTime: number | null) => {
@@ -140,6 +147,35 @@ export default function POSPage() {
       minute: '2-digit',
     });
   };
+
+  // If wallet not connected, show connect prompt
+  if (!connected && !connecting && !publicKey) {
+    return (
+      <div className={styles.container}>
+        <div className={styles.header}>
+          <button onClick={() => router.push('/dashboard')} className={styles.closeButton}>
+            <X size={24} strokeWidth={2} />
+          </button>
+          <h1 className={styles.title}>POS Mode</h1>
+          <div style={{ width: '24px' }} />
+        </div>
+        <div className={styles.content} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '60vh', gap: '16px' }}>
+          <Wallet size={48} strokeWidth={2} style={{ color: 'var(--text-secondary)' }} />
+          <h2 style={{ margin: 0, textAlign: 'center' }}>Wallet Not Connected</h2>
+          <p style={{ color: 'var(--text-secondary)', textAlign: 'center', margin: 0 }}>
+            Connect your wallet to use POS mode
+          </p>
+          <Button
+            size="l"
+            onClick={() => router.push('/connect-wallet')}
+            style={{ marginTop: '16px' }}
+          >
+            Connect Wallet
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.container}>
@@ -161,14 +197,6 @@ export default function POSPage() {
             <Placeholder
               header="Loading..."
               description="Fetching transactions from chain"
-            >
-            </Placeholder>
-          </div>
-        ) : !connected || !publicKey ? (
-          <div className={styles.empty}>
-            <Placeholder
-              header="Wallet not connected"
-              description="Connect your wallet to view transactions"
             >
             </Placeholder>
           </div>

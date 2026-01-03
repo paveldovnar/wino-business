@@ -1,18 +1,19 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@telegram-apps/telegram-ui';
-import { Building2, DollarSign, Shield, CheckCircle2, LogOut, Bug, RefreshCw, AlertTriangle } from 'lucide-react';
-import { getBusiness, saveBusiness } from '@/lib/storage';
-import { useWallet } from '@/lib/wallet-mock';
-import { saveWalletState, fullWalletLogout, shouldExpectReconnect } from '@/lib/wallet-persistence';
+import { Building2, DollarSign, Shield, CheckCircle2, LogOut, Bug, RefreshCw, AlertTriangle, ExternalLink } from 'lucide-react';
+import { getBusiness, saveBusiness, clearBusiness } from '@/lib/storage';
+import { useWallet, useConnection } from '@/lib/wallet-mock';
+import { saveWalletState, fullWalletLogout, shouldExpectReconnect, clearWalletState } from '@/lib/wallet-persistence';
 import { Business } from '@/types';
+import { fetchIdentity, deriveIdentityPDA, getSolscanAccountLink, OnChainIdentity } from '@/lib/identity-pda';
 import styles from './dashboard.module.css';
 
 // Timeouts
-const SESSION_RESTORE_TIMEOUT_MS = 10000; // 10 seconds max to restore session
-const CONNECTING_STUCK_TIMEOUT_MS = 30000; // 30 seconds = definitely stuck
+const SESSION_RESTORE_TIMEOUT_MS = 8000; // 8 seconds max to restore session
+const CONNECTING_STUCK_TIMEOUT_MS = 15000; // 15 seconds = definitely stuck
 
 interface OnChainTransaction {
   signature: string;
@@ -38,7 +39,11 @@ type WalletRestoreState = 'restoring' | 'restored' | 'timeout' | 'not_expected';
 export default function DashboardPage() {
   const router = useRouter();
   const { publicKey, disconnect, connected, connecting } = useWallet();
+  const { connection } = useConnection();
   const [business, setBusiness] = useState<Business | null>(null);
+  const [onChainIdentity, setOnChainIdentity] = useState<OnChainIdentity | null>(null);
+  const [identityPda, setIdentityPda] = useState<string | null>(null);
+  const [identityLoading, setIdentityLoading] = useState(false);
   const [transactions, setTransactions] = useState<OnChainTransaction[]>([]);
   const [realBalance, setRealBalance] = useState<number | null>(null);
   const [metrics, setMetrics] = useState<DashboardMetrics>({
@@ -50,8 +55,6 @@ export default function DashboardPage() {
     lastUpdate: null,
   });
   const [loading, setLoading] = useState(true);
-  const [mintVerified, setMintVerified] = useState<boolean | null>(null);
-  const [verifying, setVerifying] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [walletRestoreState, setWalletRestoreState] = useState<WalletRestoreState>('restoring');
   const [connectingStartTime, setConnectingStartTime] = useState<number | null>(null);
@@ -60,22 +63,39 @@ export default function DashboardPage() {
   // Check if we should wait for wallet to restore
   useEffect(() => {
     const shouldWait = shouldExpectReconnect();
-    console.log('[dashboard] Should expect wallet reconnect:', shouldWait);
+    console.log('[dashboard] Should expect wallet reconnect:', shouldWait, 'connected:', connected, 'connecting:', connecting);
+
+    if (connected && publicKey) {
+      // Already connected - no need to wait
+      setWalletRestoreState('restored');
+      return;
+    }
 
     if (!shouldWait) {
       setWalletRestoreState('not_expected');
+    } else if (!connecting && !connected) {
+      // Was expecting reconnect but not connecting - might have failed silently
+      const failTimer = setTimeout(() => {
+        if (!connected && !connecting) {
+          console.log('[dashboard] Expected reconnect but not connecting, marking timeout');
+          setWalletRestoreState('timeout');
+        }
+      }, 2000); // Give 2s grace period for adapter init
+      return () => clearTimeout(failTimer);
     } else {
-      // Set timeout for session restore
+      // Currently connecting - set timeout for session restore
       const timeout = setTimeout(() => {
         console.log('[dashboard] Wallet restore timeout reached');
         if (!connected && !publicKey) {
           setWalletRestoreState('timeout');
+          // Clear the stuck connecting state
+          clearWalletState();
         }
       }, SESSION_RESTORE_TIMEOUT_MS);
 
       return () => clearTimeout(timeout);
     }
-  }, [connected, publicKey]);
+  }, [connected, publicKey, connecting]);
 
   // Track connecting state for stuck detection
   useEffect(() => {
@@ -103,20 +123,78 @@ export default function DashboardPage() {
     }
   }, [connecting, connectingStartTime]);
 
+  // Lookup identity on-chain (PDA) when wallet connects
+  const lookupIdentity = useCallback(async (walletAddress: string) => {
+    if (!connection) return;
+
+    setIdentityLoading(true);
+    console.log('[dashboard] Looking up identity on-chain for:', walletAddress);
+
+    try {
+      const { PublicKey } = await import('@solana/web3.js');
+      const authority = new PublicKey(walletAddress);
+      const result = await fetchIdentity(connection, authority);
+
+      if (result.found && result.identity) {
+        console.log('[dashboard] Found on-chain identity:', result.identity.name);
+        setOnChainIdentity(result.identity);
+        setIdentityPda(result.pda?.toBase58() || null);
+
+        // Sync to local storage
+        const localBusiness = getBusiness();
+        const updatedBusiness: Business = {
+          id: localBusiness?.id || crypto.randomUUID(),
+          name: result.identity.name,
+          logo: localBusiness?.logo,
+          logoUri: result.identity.logoUri || undefined,
+          walletAddress: walletAddress,
+          identityPda: result.pda?.toBase58(),
+          createdAt: localBusiness?.createdAt || new Date(result.identity.createdAt * 1000),
+        };
+        saveBusiness(updatedBusiness);
+        setBusiness(updatedBusiness);
+      } else {
+        console.log('[dashboard] No on-chain identity found');
+        setOnChainIdentity(null);
+        setIdentityPda(result.pda?.toBase58() || null);
+
+        // Check local storage as fallback
+        const localBusiness = getBusiness();
+        if (localBusiness) {
+          console.log('[dashboard] Using local business:', localBusiness.name);
+          setBusiness(localBusiness);
+        }
+      }
+    } catch (err) {
+      console.error('[dashboard] Failed to lookup identity:', err);
+      // Fall back to local storage
+      const localBusiness = getBusiness();
+      if (localBusiness) {
+        setBusiness(localBusiness);
+      }
+    } finally {
+      setIdentityLoading(false);
+    }
+  }, [connection]);
+
   // Update wallet restore state when connection completes
   useEffect(() => {
     if (connected && publicKey) {
-      console.log('[dashboard] Wallet connected:', publicKey.toBase58());
+      const walletAddress = publicKey.toBase58();
+      console.log('[dashboard] Wallet connected:', walletAddress);
       setWalletRestoreState('restored');
 
       // Save wallet state for persistence
       saveWalletState({
         wasConnected: true,
-        lastAddress: publicKey.toBase58(),
+        lastAddress: walletAddress,
         lastConnectedAt: Date.now(),
       });
+
+      // Lookup identity on Arweave
+      lookupIdentity(walletAddress);
     }
-  }, [connected, publicKey]);
+  }, [connected, publicKey, lookupIdentity]);
 
   // Fetch real balance and transactions
   useEffect(() => {
@@ -172,14 +250,28 @@ export default function DashboardPage() {
 
   // Calculate metrics from transactions
   useEffect(() => {
+    // If wallet not connected, show null for all metrics
+    if (!connected || !publicKey) {
+      setMetrics({
+        totalBalance: null,
+        incomeToday: null,
+        incomeLast30Days: null,
+        averageDay: null,
+        todayVsAverage: null,
+        lastUpdate: null,
+      });
+      return;
+    }
+
     if (transactions.length === 0) {
+      // Connected but no transactions - show balance but 0 for income
       setMetrics({
         totalBalance: realBalance,
         incomeToday: realBalance === null ? null : 0,
         incomeLast30Days: realBalance === null ? null : 0,
         averageDay: realBalance === null ? null : 0,
-        todayVsAverage: realBalance === null ? null : 0,
-        lastUpdate: null,
+        todayVsAverage: null, // Can't calculate vs average with no data
+        lastUpdate: realBalance !== null ? new Date() : null,
       });
       return;
     }
@@ -192,8 +284,12 @@ export default function DashboardPage() {
     const last30DaysStart = now - 30 * 24 * 60 * 60;
     const last90DaysStart = now - 90 * 24 * 60 * 60;
 
-    // Safe amount getter
-    const getAmount = (tx: OnChainTransaction) => tx.amountUi ?? 0;
+    // Safe amount getter - handle NaN and invalid values
+    const getAmount = (tx: OnChainTransaction) => {
+      const val = tx.amountUi;
+      if (val === null || val === undefined || isNaN(val)) return 0;
+      return val;
+    };
     const getTime = (tx: OnChainTransaction) => tx.blockTime ?? 0;
 
     // Income today
@@ -209,16 +305,18 @@ export default function DashboardPage() {
     // Calculate average day (last 90 days)
     const last90DaysTxs = transactions.filter((tx) => getTime(tx) >= last90DaysStart);
     const last90DaysIncome = last90DaysTxs.reduce((sum, tx) => sum + getAmount(tx), 0);
-    const averageDay = last90DaysIncome / 90;
+    const averageDay = last90DaysTxs.length > 0 ? last90DaysIncome / 90 : null;
 
-    // Today vs average
-    const todayVsAverage = averageDay > 0 ? ((incomeToday - averageDay) / averageDay) * 100 : 0;
+    // Today vs average (only if we have average data)
+    const todayVsAverage = averageDay !== null && averageDay > 0
+      ? ((incomeToday - averageDay) / averageDay) * 100
+      : null;
 
     // Last update time
     const validTimes = transactions.map(tx => getTime(tx)).filter(t => t > 0);
     const lastUpdate = validTimes.length > 0
       ? new Date(Math.max(...validTimes) * 1000)
-      : null;
+      : new Date();
 
     setMetrics({
       totalBalance: realBalance,
@@ -228,49 +326,17 @@ export default function DashboardPage() {
       todayVsAverage,
       lastUpdate,
     });
-  }, [transactions, realBalance]);
+  }, [transactions, realBalance, connected, publicKey]);
 
-  // Load business profile
+  // Load business profile from local storage initially
   useEffect(() => {
     const businessData = getBusiness();
-    if (!businessData) {
-      // Only redirect if we're not restoring and won't connect
-      if (walletRestoreState === 'not_expected' || walletRestoreState === 'timeout') {
-        console.log('[dashboard] No business profile, redirecting to welcome');
-        router.replace('/welcome');
-      }
-      return;
+    if (businessData) {
+      setBusiness(businessData);
     }
-
-    setBusiness(businessData);
-
-    // Verify NFT mint status if business has a mint address
-    if (businessData.nftMintAddress) {
-      verifyMintStatus(businessData.nftMintAddress);
-    }
-  }, [router, walletRestoreState]);
-
-  const verifyMintStatus = async (mintAddress: string) => {
-    setVerifying(true);
-    try {
-      console.log('[dashboard] Verifying NFT mint:', mintAddress);
-      const res = await fetch(`/api/identity/verify?mint=${mintAddress}`);
-      const data = await res.json();
-
-      if (data.verified) {
-        console.log('[dashboard] NFT verified on-chain:', data.nft);
-        setMintVerified(true);
-      } else {
-        console.warn('[dashboard] NFT not verified:', data.error);
-        setMintVerified(false);
-      }
-    } catch (err) {
-      console.error('[dashboard] Failed to verify mint:', err);
-      setMintVerified(false);
-    } finally {
-      setVerifying(false);
-    }
-  };
+    // Don't redirect - let user stay on dashboard even without business
+    // They can create identity from here
+  }, []);
 
   // Full logout - clear everything and redirect
   const handleLogout = useCallback(async () => {
@@ -284,6 +350,7 @@ export default function DashboardPage() {
 
     // Full cleanup
     fullWalletLogout();
+    clearBusiness();
 
     // Redirect to connect wallet
     router.push('/connect-wallet');
@@ -368,8 +435,26 @@ export default function DashboardPage() {
     );
   }
 
-  if (!business) {
-    return null;
+  // Show connect wallet UI if not connected and no reconnect expected
+  if (walletRestoreState === 'not_expected' && !connected && !publicKey) {
+    return (
+      <div className={styles.container}>
+        <div className={styles.content} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '60vh', gap: '16px' }}>
+          <Building2 size={48} strokeWidth={2} style={{ color: 'var(--text-secondary)' }} />
+          <h2 style={{ margin: 0 }}>Connect Your Wallet</h2>
+          <p style={{ color: 'var(--text-secondary)', textAlign: 'center', margin: 0 }}>
+            Connect your Solana wallet to view your business dashboard
+          </p>
+          <Button
+            size="l"
+            onClick={() => router.push('/connect-wallet')}
+            style={{ marginTop: '16px' }}
+          >
+            Connect Wallet
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   const formatCurrency = (amount: number | null) => {
@@ -383,13 +468,31 @@ export default function DashboardPage() {
     return `${sign}${value.toFixed(1)}%`;
   };
 
+  // Get logo source - prefer on-chain URI
+  const getLogoSrc = () => {
+    if (onChainIdentity?.logoUri) {
+      // Handle different URI formats
+      if (onChainIdentity.logoUri.startsWith('ar://')) {
+        const arweaveId = onChainIdentity.logoUri.replace('ar://', '');
+        return `https://arweave.net/${arweaveId}`;
+      }
+      return onChainIdentity.logoUri;
+    }
+    return business?.logo || null;
+  };
+
+  const logoSrc = getLogoSrc();
+
+  // Get cluster for links
+  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'devnet') as 'devnet' | 'mainnet-beta';
+
   return (
     <div className={styles.container}>
       <div className={styles.header}>
         <div className={styles.businessInfo}>
           <div className={styles.logoWrapper}>
-            {business.logo ? (
-              <img src={business.logo} alt="Logo" className={styles.logo} />
+            {logoSrc ? (
+              <img src={logoSrc} alt="Logo" className={styles.logo} />
             ) : (
               <div className={styles.logoPlaceholder}>
                 <Building2 size={24} strokeWidth={2} />
@@ -397,7 +500,7 @@ export default function DashboardPage() {
             )}
           </div>
           <div>
-            <h1 className={styles.businessName}>{business.name}</h1>
+            <h1 className={styles.businessName}>{business?.name || 'Loading...'}</h1>
             <p className={styles.businessType}>Business merchant</p>
           </div>
         </div>
@@ -434,7 +537,9 @@ export default function DashboardPage() {
           <div>isStuck: {String(isStuck)}</div>
           <div>realBalance: {realBalance}</div>
           <div>txCount: {transactions.length}</div>
-          <div>network: mainnet-beta</div>
+          <div>onChainIdentity: {onChainIdentity ? 'found' : 'none'}</div>
+          <div>identityPda: {identityPda || 'none'}</div>
+          <div>network: {cluster}</div>
           <div style={{ marginTop: '8px' }}>
             <button onClick={handleResetConnection} style={{ fontSize: '10px', padding: '4px 8px' }}>
               Force Reset
@@ -517,41 +622,37 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Business Identity NFT */}
+        {/* Business Identity */}
         <div className={styles.identityCard}>
           <div className={styles.identityHeader}>
             <div className={styles.identityIcon}>
               <Shield size={24} strokeWidth={2} />
             </div>
             <div className={styles.identityInfo}>
-              <div className={styles.identityTitle}>Business Identity NFT</div>
+              <div className={styles.identityTitle}>Business Identity</div>
               <div className={styles.identityStatus}>
-                {verifying ? (
-                  <span className={styles.statusNotMinted}>Verifying...</span>
-                ) : mintVerified === true ? (
+                {identityLoading ? (
+                  <span className={styles.statusNotMinted}>Checking on-chain...</span>
+                ) : onChainIdentity ? (
                   <div className={styles.statusMinted}>
                     <CheckCircle2 size={16} strokeWidth={2} />
-                    <span>Minted (verified on-chain)</span>
+                    <span>On-chain PDA</span>
                   </div>
-                ) : mintVerified === false && business.nftMintAddress ? (
-                  <span className={styles.statusNotMinted} style={{ color: '#f44336' }}>
-                    Not verified on-chain
-                  </span>
                 ) : (
-                  <span className={styles.statusNotMinted}>Not minted</span>
+                  <span className={styles.statusNotMinted}>Not created</span>
                 )}
               </div>
             </div>
           </div>
 
-          {business.nftMintAddress && mintVerified === true ? (
+          {onChainIdentity && identityPda ? (
             <div className={styles.identityMintAddress}>
-              <div className={styles.mintLabel}>Mint Address</div>
+              <div className={styles.mintLabel}>Identity PDA</div>
               <div className={styles.mintValue}>
-                {business.nftMintAddress.slice(0, 4)}...{business.nftMintAddress.slice(-4)}
+                {identityPda.slice(0, 8)}...{identityPda.slice(-8)}
               </div>
               <a
-                href={`https://solscan.io/token/${business.nftMintAddress}`}
+                href={getSolscanAccountLink(identityPda, cluster)}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{
@@ -559,28 +660,13 @@ export default function DashboardPage() {
                   color: 'var(--accent)',
                   marginTop: '4px',
                   textDecoration: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
                 }}
               >
-                View on Solscan
+                View on Solscan <ExternalLink size={12} />
               </a>
-            </div>
-          ) : business.nftMintAddress && mintVerified === false ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
-                Mint address exists locally but not verified on-chain. Try minting again.
-              </p>
-              <Button
-                size="m"
-                mode="outline"
-                onClick={() => {
-                  const updatedBusiness = { ...business, nftMintAddress: undefined };
-                  saveBusiness(updatedBusiness);
-                  router.push('/identity/mint/review');
-                }}
-                className={styles.mintButton}
-              >
-                Retry mint
-              </Button>
             </div>
           ) : !connected || !publicKey ? (
             <Button
@@ -589,16 +675,16 @@ export default function DashboardPage() {
               disabled
               className={styles.mintButton}
             >
-              Connect wallet to mint NFT
+              Connect wallet to create identity
             </Button>
           ) : (
             <Button
               size="m"
               mode="outline"
-              onClick={() => router.push('/identity/mint/review')}
+              onClick={() => router.push('/business-identity/name')}
               className={styles.mintButton}
             >
-              Mint identity NFT (optional)
+              Create Business Identity
             </Button>
           )}
         </div>

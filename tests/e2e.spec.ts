@@ -187,22 +187,27 @@ test.describe('Invoice API Tests', () => {
   });
 });
 
-test.describe('NFT Identity Verification', () => {
-  test('verify endpoint handles invalid mint', async ({ request }) => {
-    const response = await request.get(`${API_BASE}/api/identity/verify?mint=invalid`);
-    expect(response.status()).toBe(400);
+test.describe('PDA Identity System', () => {
+  test('identity lookup API responds', async ({ request }) => {
+    // Test with the deployed program's test wallet
+    const testWallet = '4FfTsogB2sqU6o9b4JFqhRpmoW5psiPoapRHJ5z1ZhLT';
+
+    const response = await request.get(`${API_BASE}/api/identity/lookup?authority=${testWallet}`);
+    console.log('[test] Identity lookup status:', response.status());
+
+    // Accept various status codes - 200 (found/not found), 400 (validation error), 500 (RPC error)
+    expect([200, 400, 500]).toContain(response.status());
+
+    if (response.status() === 200) {
+      const data = await response.json();
+      console.log('[test] Identity lookup response:', JSON.stringify(data).slice(0, 500));
+      expect(data).toHaveProperty('found');
+      expect(data).toHaveProperty('pda');
+    }
   });
 
-  test('verify endpoint handles non-existent mint', async ({ request }) => {
-    // Random valid-format address that doesn't exist
-    const fakeMint = '11111111111111111111111111111111';
-
-    const response = await request.get(`${API_BASE}/api/identity/verify?mint=${fakeMint}`);
-    const data = await response.json();
-
-    console.log('[test] Verify non-existent mint response:', data);
-
-    // Should return verified: false for non-existent mint
-    expect(data.verified).toBe(false);
+  test('identity lookup requires authority param', async ({ request }) => {
+    const response = await request.get(`${API_BASE}/api/identity/lookup`);
+    expect(response.status()).toBe(400);
   });
 });

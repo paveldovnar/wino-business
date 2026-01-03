@@ -78,4 +78,95 @@
 .actions {
   padding: var(--space-md);
   border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.iconWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.iconError {
+  color: var(--error, #ef4444);
+}
+
+.iconSuccess {
+  color: var(--success, #22c55e);
+}
+
+.txInfo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+}
+
+.txLabel {
+  font-size: var(--t-footnote);
+  color: var(--text-secondary);
+}
+
+.txLink {
+  font-size: var(--t-footnote);
+  color: var(--accent);
+  text-decoration: none;
+  font-family: monospace;
+}
+
+.txLink:hover {
+  text-decoration: underline;
+}
+
+.steps {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-xl);
+  margin-top: var(--space-lg);
+}
+
+.stepIndicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.stepDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  border: 2px solid var(--border-color);
+  transition: all 0.2s ease;
+}
+
+.stepActive .stepDot {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb, 59, 130, 246), 0.2);
+}
+
+.stepCompleted .stepDot {
+  background: var(--success, #22c55e);
+  border-color: var(--success, #22c55e);
+}
+
+.stepLabel {
+  font-size: var(--t-caption);
+  color: var(--text-tertiary);
+}
+
+.stepActive .stepLabel {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.stepCompleted .stepLabel {
+  color: var(--success, #22c55e);
 }

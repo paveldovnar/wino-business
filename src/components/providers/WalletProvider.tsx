@@ -1,15 +1,81 @@
 'use client';
 
-import { ReactNode, useMemo, useCallback, useEffect, useState } from 'react';
+import { ReactNode, useMemo, useCallback, useEffect, useState, useRef } from 'react';
 import { ConnectionProvider, WalletProvider as SolanaWalletProvider, useWallet } from '@solana/wallet-adapter-react';
 import { WalletConnectWalletAdapter } from '@solana/wallet-adapter-walletconnect';
 import { clusterApiUrl } from '@solana/web3.js';
-import { saveWalletState, getWalletState, clearWalletState } from '@/lib/wallet-persistence';
+import { saveWalletState, getWalletState, clearWalletState, shouldExpectReconnect, fullWalletLogout } from '@/lib/wallet-persistence';
 
-// Inner component that handles wallet state persistence
+// Timeout for wallet session restoration (10 seconds)
+const SESSION_RESTORE_TIMEOUT_MS = 10000;
+
+// Inner component that handles wallet state persistence and timeout
 function WalletPersistenceHandler({ children }: { children: ReactNode }) {
-  const { connected, publicKey, connecting, disconnect } = useWallet();
+  const { connected, publicKey, connecting, disconnect, wallet } = useWallet();
   const [hasCheckedSession, setHasCheckedSession] = useState(false);
+  const [restoreTimedOut, setRestoreTimedOut] = useState(false);
+  const connectingStartRef = useRef<number | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Debug logging in development
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[WalletProvider] State:', {
+        connected,
+        connecting,
+        publicKey: publicKey?.toBase58()?.slice(0, 8) || null,
+        walletRestoring: connecting && !connected,
+        restoreTimedOut,
+      });
+    }
+  }, [connected, connecting, publicKey, restoreTimedOut]);
+
+  // Handle connecting timeout - prevent "connecting forever"
+  useEffect(() => {
+    if (connecting && !connected) {
+      // Started connecting
+      if (!connectingStartRef.current) {
+        connectingStartRef.current = Date.now();
+        console.log('[WalletProvider] Connection attempt started');
+
+        // Set timeout to force-end connecting state
+        timeoutRef.current = setTimeout(() => {
+          if (connecting && !connected) {
+            console.warn('[WalletProvider] Connection timeout reached, forcing disconnect');
+            setRestoreTimedOut(true);
+            connectingStartRef.current = null;
+
+            // Force disconnect and clear state
+            try {
+              disconnect();
+            } catch (e) {
+              console.warn('[WalletProvider] Disconnect during timeout failed:', e);
+            }
+
+            // Clear wallet state to prevent infinite retry
+            clearWalletState();
+          }
+        }, SESSION_RESTORE_TIMEOUT_MS);
+      }
+    } else {
+      // No longer connecting - clear timeout
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+      connectingStartRef.current = null;
+
+      if (connected && publicKey) {
+        setRestoreTimedOut(false);
+      }
+    }
+
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [connecting, connected, publicKey, disconnect]);
 
   // Save wallet state when connected
   useEffect(() => {
@@ -23,38 +89,33 @@ function WalletPersistenceHandler({ children }: { children: ReactNode }) {
     }
   }, [connected, publicKey]);
 
-  // Clear wallet state on explicit disconnect (not page reload)
+  // Mark session as checked
   useEffect(() => {
-    if (!connected && !connecting && hasCheckedSession) {
-      // Only clear if we previously had a session and now we don't
-      const previousState = getWalletState();
-      if (previousState?.wasConnected) {
-        // Check if this is a timeout vs explicit disconnect
-        const timeSinceConnect = Date.now() - previousState.lastConnectedAt;
-        // If very recent (< 5 seconds), might be a reload - don't clear
-        if (timeSinceConnect > 5000) {
-          console.log('[WalletProvider] Session lost after', Math.round(timeSinceConnect / 1000), 'seconds');
-        }
-      }
+    if (!hasCheckedSession) {
+      // Give a brief moment for auto-connect to kick in
+      const timer = setTimeout(() => {
+        setHasCheckedSession(true);
+      }, 500);
+      return () => clearTimeout(timer);
     }
-    setHasCheckedSession(true);
-  }, [connected, connecting, hasCheckedSession]);
+  }, [hasCheckedSession]);
 
   return <>{children}</>;
 }
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  // Use mainnet-beta as specified in requirements
+  // Use devnet for identity PDA testing
+  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'devnet') as 'devnet' | 'mainnet-beta';
   const endpoint = useMemo(() => {
     const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
-    return rpcUrl || clusterApiUrl('mainnet-beta');
-  }, []);
+    return rpcUrl || clusterApiUrl(cluster);
+  }, [cluster]);
 
   // Configure WalletConnect adapter with project ID
   const wallets = useMemo(
     () => [
       new WalletConnectWalletAdapter({
-        network: 'mainnet-beta' as any,
+        network: cluster as any,
         options: {
           projectId: 'bf22e397164491caa066ada6d64c6756',
           metadata: {
@@ -66,7 +127,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         },
       }),
     ],
-    []
+    [cluster]
   );
 
   // Error handler for wallet errors

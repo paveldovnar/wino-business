@@ -63,7 +63,7 @@ export default function BusinessIdentityReviewPage() {
 
         <div className={styles.infoBox}>
           <p className={styles.infoText}>
-            Your business profile will be saved locally. You can optionally mint a Business Identity NFT from the dashboard later.
+            Your business identity will be stored on-chain as a Solana PDA. You'll need to sign a transaction with your wallet.
           </p>
         </div>
       </div>

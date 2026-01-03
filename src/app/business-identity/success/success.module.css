@@ -92,23 +92,39 @@
   margin: 0;
 }
 
+.addressRow {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.addressLabel {
+  font-size: var(--t-footnote);
+  color: var(--text-secondary);
+}
+
+.addressValue {
+  font-size: var(--t-footnote);
+  font-family: monospace;
+  color: var(--text-primary);
+}
+
 .explorerLink {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
-  padding: var(--space-sm) var(--space-md);
-  background: none;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
   color: var(--accent);
   font-size: var(--t-footnote);
-  transition: all 0.2s;
-  margin-top: var(--space-sm);
+  font-family: monospace;
+  text-decoration: none;
+  transition: opacity 0.2s;
 }
 
 .explorerLink:hover {
-  background: var(--bg-tertiary);
-  border-color: var(--accent);
+  opacity: 0.8;
 }
 
 .infoBox {

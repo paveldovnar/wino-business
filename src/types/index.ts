@@ -1,9 +1,14 @@
 export interface Business {
   id: string;
   name: string;
-  logo?: string;
+  logo?: string; // Local data URL (temporary, before upload)
+  logoUri?: string; // Arweave/Irys URI (ar://... or https://...)
   walletAddress: string;
-  nftMintAddress?: string;
+  // On-chain identity (PDA)
+  identityPda?: string; // PDA address on Solana
+  identityTxSignature?: string; // Transaction signature for creation
+  // Legacy Arweave (deprecated)
+  arweaveTxId?: string; // Identity TX on Arweave (deprecated)
   createdAt: Date;
 }
 
