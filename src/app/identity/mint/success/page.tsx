@@ -84,16 +84,42 @@ export default function IdentityMintSuccessPage() {
             </div>
           )}
 
-          {mintResult?.txSignature && !mintResult.txSignature.startsWith('MetaplexCreated_') && (
+          {mintResult?.tx1Signature && (
             <div className={styles.resultRow}>
               <div className={styles.resultIcon}>
                 <ExternalLink size={20} strokeWidth={2} />
               </div>
               <div className={styles.resultContent}>
-                <div className={styles.resultLabel}>Transaction</div>
-                <div className={styles.resultValue} style={{ fontFamily: 'monospace', fontSize: '14px' }}>
-                  {mintResult.txSignature.slice(0, 8)}...{mintResult.txSignature.slice(-8)}
-                </div>
+                <div className={styles.resultLabel}>TX1 (Create Mint)</div>
+                <a
+                  href={`https://solscan.io/tx/${mintResult.tx1Signature}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.resultValue}
+                  style={{ fontFamily: 'monospace', fontSize: '14px', color: 'var(--accent)', textDecoration: 'none' }}
+                >
+                  {mintResult.tx1Signature.slice(0, 8)}...{mintResult.tx1Signature.slice(-8)}
+                </a>
+              </div>
+            </div>
+          )}
+
+          {mintResult?.tx2Signature && (
+            <div className={styles.resultRow}>
+              <div className={styles.resultIcon}>
+                <ExternalLink size={20} strokeWidth={2} />
+              </div>
+              <div className={styles.resultContent}>
+                <div className={styles.resultLabel}>TX2 (Create Metadata)</div>
+                <a
+                  href={`https://solscan.io/tx/${mintResult.tx2Signature}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.resultValue}
+                  style={{ fontFamily: 'monospace', fontSize: '14px', color: 'var(--accent)', textDecoration: 'none' }}
+                >
+                  {mintResult.tx2Signature.slice(0, 8)}...{mintResult.tx2Signature.slice(-8)}
+                </a>
               </div>
             </div>
           )}
