@@ -46,3 +46,64 @@ export function shouldExpectReconnect(): boolean {
 
   return isRecent;
 }
+
+/**
+ * Full logout - clears ALL wallet-related state from localStorage
+ * This is the nuclear option for a complete reset
+ */
+export function fullWalletLogout(): void {
+  if (typeof window === 'undefined') return;
+
+  console.log('[wallet-logout] Starting full logout...');
+
+  // Clear our app state
+  clearWalletState();
+
+  // Clear all WalletConnect v2 keys
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key) {
+      // WalletConnect v2 keys
+      if (key.startsWith('wc@2:')) keysToRemove.push(key);
+      if (key.startsWith('walletconnect')) keysToRemove.push(key);
+      if (key.startsWith('WC_')) keysToRemove.push(key);
+      // Wagmi keys
+      if (key.startsWith('wagmi')) keysToRemove.push(key);
+      // Web3Modal keys
+      if (key.startsWith('w3m')) keysToRemove.push(key);
+      if (key.startsWith('web3modal')) keysToRemove.push(key);
+      // Reown keys (new WalletConnect rebrand)
+      if (key.startsWith('@reown')) keysToRemove.push(key);
+      if (key.startsWith('reown')) keysToRemove.push(key);
+    }
+  }
+
+  // Remove all found keys
+  keysToRemove.forEach(key => {
+    console.log('[wallet-logout] Removing:', key);
+    localStorage.removeItem(key);
+  });
+
+  console.log('[wallet-logout] Cleared', keysToRemove.length, 'storage keys');
+
+  // Also try to clear sessionStorage for good measure
+  try {
+    const sessionKeysToRemove: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key && (
+        key.startsWith('wc') ||
+        key.startsWith('wallet') ||
+        key.startsWith('wagmi') ||
+        key.startsWith('w3m')
+      )) {
+        sessionKeysToRemove.push(key);
+      }
+    }
+    sessionKeysToRemove.forEach(key => sessionStorage.removeItem(key));
+    console.log('[wallet-logout] Cleared', sessionKeysToRemove.length, 'session keys');
+  } catch (e) {
+    console.warn('[wallet-logout] Could not clear sessionStorage:', e);
+  }
+}

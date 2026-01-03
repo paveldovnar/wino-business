@@ -3,19 +3,23 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@telegram-apps/telegram-ui';
-import { Building2, DollarSign, Shield, CheckCircle2, LogOut, Bug } from 'lucide-react';
-import { getBusiness, saveBusiness, clearBusiness } from '@/lib/storage';
+import { Building2, DollarSign, Shield, CheckCircle2, LogOut, Bug, RefreshCw, AlertTriangle } from 'lucide-react';
+import { getBusiness, saveBusiness } from '@/lib/storage';
 import { useWallet } from '@/lib/wallet-mock';
-import { saveWalletState, clearWalletState, shouldExpectReconnect } from '@/lib/wallet-persistence';
+import { saveWalletState, fullWalletLogout, shouldExpectReconnect } from '@/lib/wallet-persistence';
 import { Business } from '@/types';
 import styles from './dashboard.module.css';
 
+// Timeouts
+const SESSION_RESTORE_TIMEOUT_MS = 10000; // 10 seconds max to restore session
+const CONNECTING_STUCK_TIMEOUT_MS = 30000; // 30 seconds = definitely stuck
+
 interface OnChainTransaction {
   signature: string;
-  blockTime: number;
-  amountUi: number;
-  source: string;
-  destination: string;
+  blockTime: number | null;
+  amountUi: number | null;
+  source: string | null;
+  destination: string | null;
   status: string;
   explorerUrl: string;
 }
@@ -28,6 +32,8 @@ interface DashboardMetrics {
   todayVsAverage: number | null;
   lastUpdate: Date | null;
 }
+
+type WalletRestoreState = 'restoring' | 'restored' | 'timeout' | 'not_expected';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -47,7 +53,9 @@ export default function DashboardPage() {
   const [mintVerified, setMintVerified] = useState<boolean | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
-  const [walletRestoring, setWalletRestoring] = useState(true);
+  const [walletRestoreState, setWalletRestoreState] = useState<WalletRestoreState>('restoring');
+  const [connectingStartTime, setConnectingStartTime] = useState<number | null>(null);
+  const [isStuck, setIsStuck] = useState(false);
 
   // Check if we should wait for wallet to restore
   useEffect(() => {
@@ -55,24 +63,51 @@ export default function DashboardPage() {
     console.log('[dashboard] Should expect wallet reconnect:', shouldWait);
 
     if (!shouldWait) {
-      // No previous session, no need to wait
-      setWalletRestoring(false);
+      setWalletRestoreState('not_expected');
     } else {
-      // Give wallet adapter time to restore session
+      // Set timeout for session restore
       const timeout = setTimeout(() => {
         console.log('[dashboard] Wallet restore timeout reached');
-        setWalletRestoring(false);
-      }, 3000); // 3 second max wait
+        if (!connected && !publicKey) {
+          setWalletRestoreState('timeout');
+        }
+      }, SESSION_RESTORE_TIMEOUT_MS);
 
       return () => clearTimeout(timeout);
     }
-  }, []);
+  }, [connected, publicKey]);
 
-  // Update wallet restoring state when connection completes
+  // Track connecting state for stuck detection
+  useEffect(() => {
+    if (connecting && !connectingStartTime) {
+      setConnectingStartTime(Date.now());
+    } else if (!connecting) {
+      setConnectingStartTime(null);
+      setIsStuck(false);
+    }
+  }, [connecting, connectingStartTime]);
+
+  // Detect stuck connecting state
+  useEffect(() => {
+    if (connecting && connectingStartTime) {
+      const checkStuck = setInterval(() => {
+        const elapsed = Date.now() - connectingStartTime;
+        if (elapsed > CONNECTING_STUCK_TIMEOUT_MS) {
+          console.log('[dashboard] Wallet connection appears stuck');
+          setIsStuck(true);
+          clearInterval(checkStuck);
+        }
+      }, 1000);
+
+      return () => clearInterval(checkStuck);
+    }
+  }, [connecting, connectingStartTime]);
+
+  // Update wallet restore state when connection completes
   useEffect(() => {
     if (connected && publicKey) {
       console.log('[dashboard] Wallet connected:', publicKey.toBase58());
-      setWalletRestoring(false);
+      setWalletRestoreState('restored');
 
       // Save wallet state for persistence
       saveWalletState({
@@ -80,14 +115,8 @@ export default function DashboardPage() {
         lastAddress: publicKey.toBase58(),
         lastConnectedAt: Date.now(),
       });
-    } else if (!connecting && !connected) {
-      // Not connecting and not connected - done waiting
-      const shouldWait = shouldExpectReconnect();
-      if (!shouldWait) {
-        setWalletRestoring(false);
-      }
     }
-  }, [connected, publicKey, connecting]);
+  }, [connected, publicKey]);
 
   // Fetch real balance and transactions
   useEffect(() => {
@@ -112,14 +141,18 @@ export default function DashboardPage() {
 
         if (balanceRes.ok) {
           const balanceData = await balanceRes.json();
-          setRealBalance(balanceData.uiAmount ?? 0);
+          setRealBalance(balanceData.uiAmount ?? null);
           console.log('[dashboard] Real balance:', balanceData.uiAmount);
+        } else {
+          setRealBalance(null);
         }
 
         if (txRes.ok) {
           const txData = await txRes.json();
           setTransactions(txData.transactions || []);
           console.log('[dashboard] Fetched', txData.count, 'transactions');
+        } else {
+          setTransactions([]);
         }
       } catch (err) {
         console.error('[dashboard] Failed to fetch data:', err);
@@ -140,7 +173,6 @@ export default function DashboardPage() {
   // Calculate metrics from transactions
   useEffect(() => {
     if (transactions.length === 0) {
-      // No transactions - show balance if available, otherwise null
       setMetrics({
         totalBalance: realBalance,
         incomeToday: realBalance === null ? null : 0,
@@ -160,27 +192,32 @@ export default function DashboardPage() {
     const last30DaysStart = now - 30 * 24 * 60 * 60;
     const last90DaysStart = now - 90 * 24 * 60 * 60;
 
+    // Safe amount getter
+    const getAmount = (tx: OnChainTransaction) => tx.amountUi ?? 0;
+    const getTime = (tx: OnChainTransaction) => tx.blockTime ?? 0;
+
     // Income today
     const incomeToday = transactions
-      .filter((tx) => tx.blockTime >= todayStartSec)
-      .reduce((sum, tx) => sum + tx.amountUi, 0);
+      .filter((tx) => getTime(tx) >= todayStartSec)
+      .reduce((sum, tx) => sum + getAmount(tx), 0);
 
     // Income last 30 days
     const incomeLast30Days = transactions
-      .filter((tx) => tx.blockTime >= last30DaysStart)
-      .reduce((sum, tx) => sum + tx.amountUi, 0);
+      .filter((tx) => getTime(tx) >= last30DaysStart)
+      .reduce((sum, tx) => sum + getAmount(tx), 0);
 
     // Calculate average day (last 90 days)
-    const last90DaysTxs = transactions.filter((tx) => tx.blockTime >= last90DaysStart);
-    const last90DaysIncome = last90DaysTxs.reduce((sum, tx) => sum + tx.amountUi, 0);
+    const last90DaysTxs = transactions.filter((tx) => getTime(tx) >= last90DaysStart);
+    const last90DaysIncome = last90DaysTxs.reduce((sum, tx) => sum + getAmount(tx), 0);
     const averageDay = last90DaysIncome / 90;
 
     // Today vs average
     const todayVsAverage = averageDay > 0 ? ((incomeToday - averageDay) / averageDay) * 100 : 0;
 
     // Last update time
-    const lastUpdate = transactions.length > 0
-      ? new Date(Math.max(...transactions.map((tx) => tx.blockTime * 1000)))
+    const validTimes = transactions.map(tx => getTime(tx)).filter(t => t > 0);
+    const lastUpdate = validTimes.length > 0
+      ? new Date(Math.max(...validTimes) * 1000)
       : null;
 
     setMetrics({
@@ -197,8 +234,8 @@ export default function DashboardPage() {
   useEffect(() => {
     const businessData = getBusiness();
     if (!businessData) {
-      // Only redirect if we're not waiting for wallet and wallet didn't connect
-      if (!walletRestoring) {
+      // Only redirect if we're not restoring and won't connect
+      if (walletRestoreState === 'not_expected' || walletRestoreState === 'timeout') {
         console.log('[dashboard] No business profile, redirecting to welcome');
         router.replace('/welcome');
       }
@@ -211,7 +248,7 @@ export default function DashboardPage() {
     if (businessData.nftMintAddress) {
       verifyMintStatus(businessData.nftMintAddress);
     }
-  }, [router, walletRestoring]);
+  }, [router, walletRestoreState]);
 
   const verifyMintStatus = async (mintAddress: string) => {
     setVerifying(true);
@@ -235,25 +272,97 @@ export default function DashboardPage() {
     }
   };
 
-  const handleDisconnect = async () => {
-    if (confirm('Disconnect wallet? Your business profile will remain saved.')) {
-      try {
-        await disconnect();
-        clearWalletState();
-        console.log('[dashboard] Wallet disconnected');
-        router.push('/welcome');
-      } catch (err) {
-        console.error('[dashboard] Failed to disconnect wallet:', err);
-      }
-    }
-  };
+  // Full logout - clear everything and redirect
+  const handleLogout = useCallback(async () => {
+    console.log('[dashboard] Logging out...');
 
-  // Show loading while waiting for wallet to restore
-  if (walletRestoring) {
+    try {
+      await disconnect();
+    } catch (err) {
+      console.warn('[dashboard] Disconnect failed:', err);
+    }
+
+    // Full cleanup
+    fullWalletLogout();
+
+    // Redirect to connect wallet
+    router.push('/connect-wallet');
+  }, [disconnect, router]);
+
+  // Reset stuck connection
+  const handleResetConnection = useCallback(() => {
+    console.log('[dashboard] Resetting stuck connection...');
+
+    try {
+      disconnect();
+    } catch (err) {
+      console.warn('[dashboard] Disconnect during reset failed:', err);
+    }
+
+    fullWalletLogout();
+    window.location.reload();
+  }, [disconnect]);
+
+  // Show recovery UI if session restore timed out
+  if (walletRestoreState === 'timeout') {
     return (
       <div className={styles.container}>
-        <div className={styles.content} style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '50vh' }}>
+        <div className={styles.content} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '60vh', gap: '16px' }}>
+          <AlertTriangle size={48} strokeWidth={2} style={{ color: '#ff9800' }} />
+          <h2 style={{ margin: 0 }}>Session Expired</h2>
+          <p style={{ color: 'var(--text-secondary)', textAlign: 'center', margin: 0 }}>
+            Could not restore your wallet session.
+          </p>
+          <Button
+            size="l"
+            onClick={() => router.push('/connect-wallet')}
+            style={{ marginTop: '16px' }}
+          >
+            Connect Wallet
+          </Button>
+          <Button
+            size="l"
+            mode="outline"
+            onClick={handleResetConnection}
+          >
+            <RefreshCw size={16} style={{ marginRight: '8px' }} />
+            Reset & Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show loading while restoring
+  if (walletRestoreState === 'restoring' && !connected) {
+    return (
+      <div className={styles.container}>
+        <div className={styles.content} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '50vh', gap: '12px' }}>
           <p style={{ color: 'var(--text-secondary)' }}>Restoring wallet session...</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>This may take a few seconds</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show recovery if stuck in connecting state
+  if (isStuck) {
+    return (
+      <div className={styles.container}>
+        <div className={styles.content} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '60vh', gap: '16px' }}>
+          <AlertTriangle size={48} strokeWidth={2} style={{ color: '#f44336' }} />
+          <h2 style={{ margin: 0 }}>Connection Stuck</h2>
+          <p style={{ color: 'var(--text-secondary)', textAlign: 'center', margin: 0 }}>
+            Wallet connection seems to be stuck. Please reset and try again.
+          </p>
+          <Button
+            size="l"
+            onClick={handleResetConnection}
+            style={{ marginTop: '16px' }}
+          >
+            <RefreshCw size={16} style={{ marginRight: '8px' }} />
+            Reset Connection
+          </Button>
         </div>
       </div>
     );
@@ -264,12 +373,12 @@ export default function DashboardPage() {
   }
 
   const formatCurrency = (amount: number | null) => {
-    if (amount === null) return '—';
+    if (amount === null || amount === undefined) return '—';
     return amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
   const formatPercentage = (value: number | null) => {
-    if (value === null) return '—';
+    if (value === null || value === undefined) return '—';
     const sign = value >= 0 ? '+' : '';
     return `${sign}${value.toFixed(1)}%`;
   };
@@ -301,11 +410,9 @@ export default function DashboardPage() {
           >
             <Bug size={20} strokeWidth={2} />
           </button>
-          {publicKey && (
-            <button onClick={handleDisconnect} className={styles.walletButton} title="Disconnect wallet">
-              <LogOut size={20} strokeWidth={2} />
-            </button>
-          )}
+          <button onClick={handleLogout} className={styles.walletButton} title="Logout">
+            <LogOut size={20} strokeWidth={2} />
+          </button>
         </div>
       </div>
 
@@ -323,10 +430,16 @@ export default function DashboardPage() {
           <div>connected: {String(connected)}</div>
           <div>connecting: {String(connecting)}</div>
           <div>publicKey: {publicKey ? publicKey.toBase58() : 'null'}</div>
-          <div>walletRestoring: {String(walletRestoring)}</div>
+          <div>walletRestoreState: {walletRestoreState}</div>
+          <div>isStuck: {String(isStuck)}</div>
           <div>realBalance: {realBalance}</div>
           <div>txCount: {transactions.length}</div>
           <div>network: mainnet-beta</div>
+          <div style={{ marginTop: '8px' }}>
+            <button onClick={handleResetConnection} style={{ fontSize: '10px', padding: '4px 8px' }}>
+              Force Reset
+            </button>
+          </div>
         </div>
       )}
 
@@ -448,7 +561,7 @@ export default function DashboardPage() {
                   textDecoration: 'none',
                 }}
               >
-                View on Solscan →
+                View on Solscan
               </a>
             </div>
           ) : business.nftMintAddress && mintVerified === false ? (

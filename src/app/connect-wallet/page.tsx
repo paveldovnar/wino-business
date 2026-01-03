@@ -1,14 +1,18 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useWallet } from '@/lib/wallet-mock';
 import { Button } from '@telegram-apps/telegram-ui';
-import { Wallet, ArrowLeft, LogOut } from 'lucide-react';
+import { Wallet, ArrowLeft, LogOut, RefreshCw } from 'lucide-react';
 import { getBusiness } from '@/lib/storage';
+import { fullWalletLogout } from '@/lib/wallet-persistence';
 import styles from './connect-wallet.module.css';
 
-type ConnectState = 'idle' | 'connecting' | 'connected' | 'routing' | 'error';
+// Connection timeout in milliseconds
+const CONNECTION_TIMEOUT_MS = 25000; // 25 seconds max
+
+type ConnectState = 'idle' | 'connecting' | 'connected' | 'routing' | 'error' | 'timeout';
 
 export default function ConnectWalletPage() {
   const router = useRouter();
@@ -16,55 +20,70 @@ export default function ConnectWalletPage() {
   const [connectState, setConnectState] = useState<ConnectState>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const hasRoutedRef = useRef(false);
+  const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const connectingStartRef = useRef<number | null>(null);
+
+  // Clear timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Monitor connecting state and implement timeout
+  useEffect(() => {
+    if (connecting && !connectingStartRef.current) {
+      // Just started connecting
+      connectingStartRef.current = Date.now();
+      console.log('[connect-wallet] Connection started, setting timeout...');
+
+      // Set timeout
+      connectionTimeoutRef.current = setTimeout(() => {
+        console.log('[connect-wallet] Connection timeout reached!');
+        if (connecting && !connected) {
+          setConnectState('timeout');
+          setErrorMessage('Connection timed out. The wallet app may not have responded. Try again or reset connection.');
+          connectingStartRef.current = null;
+        }
+      }, CONNECTION_TIMEOUT_MS);
+    } else if (!connecting) {
+      // No longer connecting - clear timeout
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
+        connectionTimeoutRef.current = null;
+      }
+      connectingStartRef.current = null;
+    }
+  }, [connecting, connected]);
 
   // Effect to handle routing when wallet is connected
   useEffect(() => {
-    // Only proceed if:
-    // 1. Wallet is connected
-    // 2. We have a public key (stable connection)
-    // 3. We haven't routed yet
     if (connected && publicKey && !hasRoutedRef.current) {
-      const isDev = process.env.NODE_ENV === 'development';
+      console.log('[connect-wallet] Stable connection detected:', publicKey.toBase58());
 
-      if (isDev) {
-        console.log('[connect-wallet] Stable connection detected:', {
-          connected,
-          publicKey: publicKey.toBase58(),
-          hasRouted: hasRoutedRef.current,
-        });
+      // Clear any pending timeout
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current);
+        connectionTimeoutRef.current = null;
       }
 
-      // Set a small delay to ensure connection is fully stable
       const timeoutId = setTimeout(() => {
-        if (hasRoutedRef.current) {
-          if (isDev) console.log('[connect-wallet] Already routed, skipping');
-          return;
-        }
+        if (hasRoutedRef.current) return;
 
         setConnectState('routing');
-
-        // Check if business profile already exists
         const existingBusiness = getBusiness();
 
-        if (isDev) {
-          console.log('[connect-wallet] Routing decision:', {
-            businessExists: !!existingBusiness,
-            businessName: existingBusiness?.name,
-          });
-        }
-
+        console.log('[connect-wallet] Routing decision:', { businessExists: !!existingBusiness });
         hasRoutedRef.current = true;
 
         if (existingBusiness) {
-          // Business exists - go to dashboard
-          if (isDev) console.log('[connect-wallet] → Routing to /dashboard');
           router.push('/dashboard');
         } else {
-          // No business profile - start onboarding
-          if (isDev) console.log('[connect-wallet] → Routing to /business-identity/name');
           router.push('/business-identity/name');
         }
-      }, 500); // 500ms delay for connection stability
+      }, 500);
 
       return () => clearTimeout(timeoutId);
     }
@@ -72,13 +91,13 @@ export default function ConnectWalletPage() {
 
   // Effect to update state based on wallet connection status
   useEffect(() => {
-    if (connecting) {
+    if (connecting && connectState !== 'timeout') {
       setConnectState('connecting');
       setErrorMessage('');
     } else if (connected && publicKey) {
       setConnectState('connected');
-    } else if (!connected && !connecting && connectState !== 'idle') {
-      // Disconnected after being connected
+      setErrorMessage('');
+    } else if (!connected && !connecting && connectState !== 'idle' && connectState !== 'timeout' && connectState !== 'error') {
       setConnectState('idle');
       hasRoutedRef.current = false;
     }
@@ -86,12 +105,9 @@ export default function ConnectWalletPage() {
 
   const handleConnectWallet = async () => {
     try {
-      const isDev = process.env.NODE_ENV === 'development';
-
-      if (isDev) {
-        console.log('[connect-wallet] Starting connection...');
-        console.log('[connect-wallet] Available wallets:', wallets.map(w => w.adapter.name));
-      }
+      console.log('[connect-wallet] Starting connection...');
+      setConnectState('connecting');
+      setErrorMessage('');
 
       // Find WalletConnect adapter
       const walletConnectWallet = wallets.find(
@@ -99,30 +115,17 @@ export default function ConnectWalletPage() {
       );
 
       if (!walletConnectWallet) {
-        const errorMsg = 'WalletConnect adapter not found';
-        console.error('[connect-wallet]', errorMsg);
-        setErrorMessage(errorMsg);
-        setConnectState('error');
-        return;
+        throw new Error('WalletConnect adapter not found');
       }
 
-      // Select the wallet adapter
-      if (isDev) console.log('[connect-wallet] Selecting WalletConnect adapter...');
+      // Select and connect
       select(walletConnectWallet.adapter.name);
-
-      // Connect to wallet
-      if (isDev) console.log('[connect-wallet] Calling connect()...');
       await connect();
 
-      if (isDev) console.log('[connect-wallet] connect() completed');
-
-      // Note: Routing is handled by the useEffect above
-      // This ensures routing happens even if connect() completes but state updates are delayed
-
+      console.log('[connect-wallet] connect() completed');
     } catch (err: any) {
-      // User cancelled or error occurred
       console.error('[connect-wallet] Connection failed:', err);
-      setErrorMessage(err?.message || 'Connection failed');
+      setErrorMessage(err?.message || 'Connection failed. Please try again.');
       setConnectState('error');
       hasRoutedRef.current = false;
     }
@@ -134,20 +137,38 @@ export default function ConnectWalletPage() {
       setConnectState('idle');
       setErrorMessage('');
       hasRoutedRef.current = false;
-
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[connect-wallet] Disconnected');
-      }
+      console.log('[connect-wallet] Disconnected');
     } catch (err) {
       console.error('[connect-wallet] Failed to disconnect:', err);
     }
   };
 
+  // Full reset - clears all wallet state and reloads
+  const handleFullReset = useCallback(() => {
+    console.log('[connect-wallet] Performing full reset...');
+
+    // Clear all wallet storage
+    fullWalletLogout();
+
+    // Reset local state
+    setConnectState('idle');
+    setErrorMessage('');
+    hasRoutedRef.current = false;
+
+    // Try to disconnect if possible
+    try {
+      disconnect();
+    } catch (e) {
+      console.warn('[connect-wallet] Disconnect failed during reset:', e);
+    }
+
+    // Force page reload to reinitialize wallet adapter
+    window.location.reload();
+  }, [disconnect]);
+
   const handleContinue = () => {
-    // Manual trigger for routing (safety net)
     if (connected && publicKey && !hasRoutedRef.current) {
       setConnectState('routing');
-
       const existingBusiness = getBusiness();
       hasRoutedRef.current = true;
 
@@ -159,7 +180,7 @@ export default function ConnectWalletPage() {
     }
   };
 
-  // Determine button state
+  // Button configuration based on state
   const getButtonConfig = () => {
     switch (connectState) {
       case 'connecting':
@@ -181,12 +202,13 @@ export default function ConnectWalletPage() {
           onClick: handleContinue,
         };
       case 'error':
+      case 'timeout':
         return {
-          text: 'Retry Connection',
+          text: 'Try Again',
           disabled: false,
           onClick: handleConnectWallet,
         };
-      default: // idle
+      default:
         return {
           text: 'Connect Wallet',
           disabled: false,
@@ -242,6 +264,20 @@ export default function ConnectWalletPage() {
               {buttonConfig.text}
             </Button>
 
+            {/* Show reset button when stuck or errored */}
+            {(connectState === 'timeout' || connectState === 'error') && (
+              <Button
+                size="l"
+                stretched
+                mode="outline"
+                onClick={handleFullReset}
+                style={{ marginTop: '12px' }}
+              >
+                <RefreshCw size={16} strokeWidth={2} style={{ marginRight: '8px' }} />
+                Reset Connection
+              </Button>
+            )}
+
             {connected && connectState !== 'routing' && (
               <Button
                 size="l"
@@ -257,13 +293,18 @@ export default function ConnectWalletPage() {
             )}
 
             <p style={{ marginTop: '12px', fontSize: '14px', color: 'var(--tgui--secondary_hint_color)', textAlign: 'center' }}>
-              {connectState === 'connected' || connectState === 'routing'
+              {connectState === 'connecting'
+                ? 'Scan QR code with your Solana wallet app...'
+                : connectState === 'connected' || connectState === 'routing'
                 ? 'Click Continue to proceed'
+                : connectState === 'timeout'
+                ? 'Connection timed out. Try again or reset.'
                 : 'Scan QR code with your Solana mobile wallet'}
             </p>
           </div>
         </div>
 
+        {/* Debug info - always show in dev */}
         {process.env.NODE_ENV === 'development' && (
           <div style={{ marginTop: '24px', padding: '12px', background: 'rgba(0,0,0,0.1)', borderRadius: '8px', fontSize: '12px' }}>
             <div><strong>Debug Info:</strong></div>

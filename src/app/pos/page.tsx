@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Placeholder } from '@telegram-apps/telegram-ui';
-import { X, CheckCircle2, Plus, ExternalLink } from 'lucide-react';
+import { X, CheckCircle2, Plus, ExternalLink, LogOut } from 'lucide-react';
 import { useWallet } from '@/lib/wallet-mock';
+import { fullWalletLogout } from '@/lib/wallet-persistence';
 import styles from './pos.module.css';
 
 interface OnChainTransaction {
@@ -19,7 +20,19 @@ interface OnChainTransaction {
 
 export default function POSPage() {
   const router = useRouter();
-  const { publicKey, connected } = useWallet();
+  const { publicKey, connected, disconnect } = useWallet();
+
+  // Full logout handler
+  const handleLogout = useCallback(async () => {
+    console.log('[POS] Logging out...');
+    try {
+      await disconnect();
+    } catch (err) {
+      console.warn('[POS] Disconnect failed:', err);
+    }
+    fullWalletLogout();
+    router.push('/connect-wallet');
+  }, [disconnect, router]);
   const [transactions, setTransactions] = useState<OnChainTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -135,6 +148,9 @@ export default function POSPage() {
           <X size={24} strokeWidth={2} />
         </button>
         <h1 className={styles.title}>POS Mode</h1>
+        <button onClick={handleLogout} className={styles.closeButton} title="Logout" style={{ marginLeft: 'auto' }}>
+          <LogOut size={20} strokeWidth={2} />
+        </button>
       </div>
 
       {/* Removed filter tabs - show all transactions */}
