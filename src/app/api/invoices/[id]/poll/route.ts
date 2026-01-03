@@ -3,7 +3,10 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { getInvoice, markInvoicePaid } from '@/server/storage/invoicesStore';
 
+export const dynamic = 'force-dynamic';
+
 const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+const MAX_TIMEOUT_MS = 8000;
 
 /**
  * POST /api/invoices/:id/poll
@@ -14,6 +17,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const startTime = Date.now();
+
   try {
     const invoiceId = params.id;
 
@@ -38,9 +43,12 @@ export async function POST(
       return NextResponse.json({ status: 'expired' });
     }
 
-    // Connect to Solana
+    // Connect to Solana with timeout config
     const rpcUrl = process.env.HELIUS_RPC_URL || process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
-    const connection = new Connection(rpcUrl, 'confirmed');
+    const connection = new Connection(rpcUrl, {
+      commitment: 'confirmed',
+      confirmTransactionInitialTimeout: MAX_TIMEOUT_MS,
+    });
 
     // Get merchant USDC ATA
     const merchantPubkey = new PublicKey(invoice.merchantWallet);
@@ -49,31 +57,55 @@ export async function POST(
       merchantPubkey
     );
 
+    // Check remaining time before timeout
+    const checkTimeout = () => {
+      if (Date.now() - startTime > MAX_TIMEOUT_MS - 500) {
+        throw new Error('Timeout approaching');
+      }
+    };
+
     // Check if ATA exists
-    const accountInfo = await connection.getAccountInfo(merchantUsdcAta);
+    const accountInfo = await Promise.race([
+      connection.getAccountInfo(merchantUsdcAta),
+      new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout')), MAX_TIMEOUT_MS - (Date.now() - startTime))
+      ),
+    ]);
+
     if (!accountInfo) {
       return NextResponse.json({ status: 'pending' });
     }
 
+    checkTimeout();
+
     // Get recent signatures (last 10 transactions)
-    const signatures = await connection.getSignaturesForAddress(
-      merchantUsdcAta,
-      { limit: 10 }
-    );
+    const signatures = await Promise.race([
+      connection.getSignaturesForAddress(merchantUsdcAta, { limit: 10 }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout')), MAX_TIMEOUT_MS - (Date.now() - startTime))
+      ),
+    ]);
 
     // Check each transaction for amount match
     for (const sig of signatures) {
       try {
+        checkTimeout();
+
         // Skip if transaction is older than invoice creation - 30s buffer
         const txTime = sig.blockTime || 0;
         if (txTime < invoice.createdAtSec - 30) {
           continue;
         }
 
-        // Parse transaction
-        const tx = await connection.getParsedTransaction(sig.signature, {
-          maxSupportedTransactionVersion: 0,
-        });
+        // Parse transaction with timeout
+        const tx = await Promise.race([
+          connection.getParsedTransaction(sig.signature, {
+            maxSupportedTransactionVersion: 0,
+          }),
+          new Promise<null>((_, reject) =>
+            setTimeout(() => reject(new Error('Timeout')), MAX_TIMEOUT_MS - (Date.now() - startTime))
+          ),
+        ]);
 
         if (!tx || !tx.meta) continue;
 
@@ -92,8 +124,8 @@ export async function POST(
               const amount = parsed.info.amount || parsed.info.tokenAmount?.amount || '0';
               const amountUsdc = parseInt(amount) / 1_000_000;
 
-              // Match by amount (with small tolerance)
-              const tolerance = 0.000001;
+              // Match by amount (with small tolerance for rounding)
+              const tolerance = 0.001; // 0.1 cent tolerance
               const amountDiff = Math.abs(amountUsdc - (invoice.amountUsd || 0));
 
               if (amountDiff <= tolerance) {
@@ -114,13 +146,18 @@ export async function POST(
                   status: 'paid',
                   paidTxSig: sig.signature,
                   payer,
+                  explorerUrl: `https://solscan.io/tx/${sig.signature}`,
                 });
               }
             }
           }
         }
-      } catch (err) {
-        console.error('[poll] Error parsing transaction:', sig.signature, err);
+      } catch (err: any) {
+        if (err.message === 'Timeout approaching' || err.message === 'Timeout') {
+          console.log('[poll] Timeout, returning pending');
+          return NextResponse.json({ status: 'pending' });
+        }
+        console.error('[poll] Error parsing transaction:', sig.signature, err.message);
         // Continue to next transaction
       }
     }
@@ -129,9 +166,15 @@ export async function POST(
     return NextResponse.json({ status: 'pending' });
 
   } catch (err: any) {
-    console.error('[poll] Error:', err);
+    console.error('[poll] Error:', err.message);
+
+    // On timeout or error, just return pending (not an error state)
+    if (err.message === 'Timeout' || err.message === 'Timeout approaching') {
+      return NextResponse.json({ status: 'pending' });
+    }
+
     return NextResponse.json(
-      { error: err.message || 'Polling failed' },
+      { error: err.message || 'Polling failed', status: 'pending' },
       { status: 500 }
     );
   }

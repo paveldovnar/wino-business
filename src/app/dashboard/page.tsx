@@ -13,18 +13,19 @@ import styles from './dashboard.module.css';
 interface OnChainTransaction {
   signature: string;
   blockTime: number;
-  payer: string;
-  amountUsdc: number;
-  destinationAta: string;
-  slot: number;
+  amountUi: number;
+  source: string;
+  destination: string;
+  status: string;
+  explorerUrl: string;
 }
 
 interface DashboardMetrics {
-  totalBalance: number;
-  incomeToday: number;
-  incomeLast30Days: number;
-  averageDay: number;
-  todayVsAverage: number;
+  totalBalance: number | null;
+  incomeToday: number | null;
+  incomeLast30Days: number | null;
+  averageDay: number | null;
+  todayVsAverage: number | null;
   lastUpdate: Date | null;
 }
 
@@ -35,11 +36,11 @@ export default function DashboardPage() {
   const [transactions, setTransactions] = useState<OnChainTransaction[]>([]);
   const [realBalance, setRealBalance] = useState<number | null>(null);
   const [metrics, setMetrics] = useState<DashboardMetrics>({
-    totalBalance: 0,
-    incomeToday: 0,
-    incomeLast30Days: 0,
-    averageDay: 0,
-    todayVsAverage: 0,
+    totalBalance: null,
+    incomeToday: null,
+    incomeLast30Days: null,
+    averageDay: null,
+    todayVsAverage: null,
     lastUpdate: null,
   });
   const [loading, setLoading] = useState(true);
@@ -139,12 +140,13 @@ export default function DashboardPage() {
   // Calculate metrics from transactions
   useEffect(() => {
     if (transactions.length === 0) {
+      // No transactions - show balance if available, otherwise null
       setMetrics({
-        totalBalance: realBalance ?? 0,
-        incomeToday: 0,
-        incomeLast30Days: 0,
-        averageDay: 0,
-        todayVsAverage: 0,
+        totalBalance: realBalance,
+        incomeToday: realBalance === null ? null : 0,
+        incomeLast30Days: realBalance === null ? null : 0,
+        averageDay: realBalance === null ? null : 0,
+        todayVsAverage: realBalance === null ? null : 0,
         lastUpdate: null,
       });
       return;
@@ -161,16 +163,16 @@ export default function DashboardPage() {
     // Income today
     const incomeToday = transactions
       .filter((tx) => tx.blockTime >= todayStartSec)
-      .reduce((sum, tx) => sum + tx.amountUsdc, 0);
+      .reduce((sum, tx) => sum + tx.amountUi, 0);
 
     // Income last 30 days
     const incomeLast30Days = transactions
       .filter((tx) => tx.blockTime >= last30DaysStart)
-      .reduce((sum, tx) => sum + tx.amountUsdc, 0);
+      .reduce((sum, tx) => sum + tx.amountUi, 0);
 
     // Calculate average day (last 90 days)
     const last90DaysTxs = transactions.filter((tx) => tx.blockTime >= last90DaysStart);
-    const last90DaysIncome = last90DaysTxs.reduce((sum, tx) => sum + tx.amountUsdc, 0);
+    const last90DaysIncome = last90DaysTxs.reduce((sum, tx) => sum + tx.amountUi, 0);
     const averageDay = last90DaysIncome / 90;
 
     // Today vs average
@@ -182,7 +184,7 @@ export default function DashboardPage() {
       : null;
 
     setMetrics({
-      totalBalance: realBalance ?? 0,
+      totalBalance: realBalance,
       incomeToday,
       incomeLast30Days,
       averageDay,
@@ -266,7 +268,8 @@ export default function DashboardPage() {
     return amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
-  const formatPercentage = (value: number) => {
+  const formatPercentage = (value: number | null) => {
+    if (value === null) return '—';
     const sign = value >= 0 ? '+' : '';
     return `${sign}${value.toFixed(1)}%`;
   };
@@ -340,11 +343,15 @@ export default function DashboardPage() {
           <div className={styles.balanceSubtext}>
             {!connected || !publicKey
               ? 'Connect wallet to see balance'
+              : loading
+              ? 'Loading...'
               : metrics.lastUpdate
               ? `Last updated ${metrics.lastUpdate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+              : realBalance === null
+              ? 'Unable to fetch balance'
               : realBalance === 0
               ? 'No USDC received yet'
-              : 'No transactions yet'}
+              : 'No recent transactions'}
           </div>
         </div>
 
@@ -382,7 +389,7 @@ export default function DashboardPage() {
               <span
                 className={styles.performanceValue}
                 style={{
-                  color: metrics.todayVsAverage >= 0 ? '#4CAF50' : '#f44336',
+                  color: metrics.todayVsAverage === null || metrics.todayVsAverage >= 0 ? '#4CAF50' : '#f44336',
                 }}
               >
                 {loading ? '—' : formatPercentage(metrics.todayVsAverage)}
