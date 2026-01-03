@@ -1,8 +1,12 @@
-import { Connection, Transaction } from '@solana/web3.js';
+import { Transaction } from '@solana/web3.js';
 import { WalletContextState } from '@/lib/wallet-mock';
+import {
+  getLatestBlockhash,
+  sendRawTransaction,
+  confirmTransaction,
+} from '@/lib/solana-rpc';
 
 export interface MintBusinessIdentityParams {
-  connection: Connection;
   wallet: WalletContextState;
   businessName: string;
   logo?: string;
@@ -47,7 +51,6 @@ export interface PartialMintState {
  * If TX1 succeeds but TX2 fails, returns partial state for retry.
  */
 export async function mintBusinessIdentityNFT({
-  connection,
   wallet,
   businessName,
   logo,
@@ -114,7 +117,7 @@ export async function mintBusinessIdentityNFT({
     console.log('[Mint] TX1 signed, sending to network...');
     report('confirming_tx1', 'Confirming TX1 on Solana...');
 
-    const tx1Signature = await connection.sendRawTransaction(signedTx1.serialize(), {
+    const tx1Signature = await sendRawTransaction(signedTx1.serialize(), {
       skipPreflight: false,
       preflightCommitment: 'confirmed',
     });
@@ -123,12 +126,8 @@ export async function mintBusinessIdentityNFT({
     console.log('[Mint] Solscan TX1:', 'https://solscan.io/tx/' + tx1Signature);
 
     // Wait for TX1 confirmation
-    const { blockhash: bh1, lastValidBlockHeight: lvbh1 } = await connection.getLatestBlockhash();
-    const confirmation1 = await connection.confirmTransaction({
-      signature: tx1Signature,
-      blockhash: bh1,
-      lastValidBlockHeight: lvbh1,
-    }, 'confirmed');
+    const { blockhash: bh1, lastValidBlockHeight: lvbh1 } = await getLatestBlockhash();
+    const confirmation1 = await confirmTransaction(tx1Signature, bh1, lvbh1, 'confirmed');
 
     if (confirmation1.value.err) {
       throw new Error(`TX1 failed: ${JSON.stringify(confirmation1.value.err)}`);
@@ -166,7 +165,7 @@ export async function mintBusinessIdentityNFT({
 
     let tx2Signature: string;
     try {
-      tx2Signature = await connection.sendRawTransaction(signedTx2.serialize(), {
+      tx2Signature = await sendRawTransaction(signedTx2.serialize(), {
         skipPreflight: false,
         preflightCommitment: 'confirmed',
       });
@@ -188,12 +187,8 @@ export async function mintBusinessIdentityNFT({
     console.log('[Mint] Solscan TX2:', 'https://solscan.io/tx/' + tx2Signature);
 
     // Wait for TX2 confirmation
-    const { blockhash: bh2, lastValidBlockHeight: lvbh2 } = await connection.getLatestBlockhash();
-    const confirmation2 = await connection.confirmTransaction({
-      signature: tx2Signature,
-      blockhash: bh2,
-      lastValidBlockHeight: lvbh2,
-    }, 'confirmed');
+    const { blockhash: bh2, lastValidBlockHeight: lvbh2 } = await getLatestBlockhash();
+    const confirmation2 = await confirmTransaction(tx2Signature, bh2, lvbh2, 'confirmed');
 
     if (confirmation2.value.err) {
       const partialError = new Error(
@@ -268,6 +263,10 @@ export async function mintBusinessIdentityNFT({
       throw new Error('Wallet disconnected. Please reconnect and try again.');
     }
 
+    if (error.message?.includes('403') || error.message?.includes('forbidden') || error.message?.includes('RPC forbidden')) {
+      throw new Error('RPC forbidden. Check SOLANA_RPC_URL / Helius API key in Vercel env, then redeploy.');
+    }
+
     throw new Error(`Failed to mint NFT: ${error.message || 'Unknown error'}`);
   }
 }
@@ -277,14 +276,12 @@ export async function mintBusinessIdentityNFT({
  * This is called when TX1 succeeded but TX2 failed
  */
 export async function retryMetadataTransaction({
-  connection,
   wallet,
   mintAddress,
   businessName,
   logo,
   onProgress,
 }: {
-  connection: Connection;
   wallet: WalletContextState;
   mintAddress: string;
   businessName: string;

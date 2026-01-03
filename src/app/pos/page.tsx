@@ -9,11 +9,12 @@ import styles from './pos.module.css';
 
 interface OnChainTransaction {
   signature: string;
-  blockTime: number;
-  payer: string;
-  amountUsdc: number;
-  destinationAta: string;
-  slot: number;
+  blockTime: number | null;
+  source: string | null;
+  amountUi: number | null;
+  destination: string | null;
+  status: string;
+  explorerUrl: string;
 }
 
 export default function POSPage() {
@@ -80,6 +81,10 @@ export default function POSPage() {
     const olderTxs: OnChainTransaction[] = [];
 
     txs.forEach(tx => {
+      if (!tx.blockTime) {
+        olderTxs.push(tx);
+        return;
+      }
       const txDate = new Date(tx.blockTime * 1000);
       if (txDate.toDateString() === today.toDateString()) {
         todayTxs.push(tx);
@@ -105,9 +110,22 @@ export default function POSPage() {
 
   const groups = groupTransactionsByDate(transactions);
 
-  const formatPayer = (payer: string) => {
-    if (!payer || payer === 'unknown') return 'Unknown';
-    return `${payer.slice(0, 4)}...${payer.slice(-4)}`;
+  const formatAddress = (address: string | null) => {
+    if (!address || address === 'unknown') return 'Unknown';
+    return `${address.slice(0, 4)}...${address.slice(-4)}`;
+  };
+
+  const formatAmount = (amount: number | null) => {
+    if (amount === null || amount === undefined) return '—';
+    return `$${amount.toFixed(2)}`;
+  };
+
+  const formatTime = (blockTime: number | null) => {
+    if (!blockTime) return '—';
+    return new Date(blockTime * 1000).toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   return (
@@ -156,19 +174,16 @@ export default function POSPage() {
                     </div>
                     <div className={styles.transactionContent}>
                       <div className={styles.transactionFrom}>
-                        From {formatPayer(tx.payer)}
+                        From {formatAddress(tx.source)}
                       </div>
                       <div className={styles.transactionTime}>
-                        {new Date(tx.blockTime * 1000).toLocaleTimeString('en-US', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                        {formatTime(tx.blockTime)}
                       </div>
                     </div>
                     <div className={styles.transactionAmount}>
-                      <span>${tx.amountUsdc.toFixed(2)}</span>
+                      <span>{formatAmount(tx.amountUi)}</span>
                       <a
-                        href={`https://solscan.io/tx/${tx.signature}`}
+                        href={tx.explorerUrl || `https://solscan.io/tx/${tx.signature}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ marginLeft: '4px', color: 'var(--accent)' }}

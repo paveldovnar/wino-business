@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { useConnection, useWallet } from '@/lib/wallet-mock';
+import { useWallet } from '@/lib/wallet-mock';
 import { Button } from '@telegram-apps/telegram-ui';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { mintBusinessIdentityNFT, MintStep, PartialMintState } from '@/lib/metaplex-mint';
@@ -37,7 +37,6 @@ const STEP_STATUS: Record<MintStep, string> = {
 
 export default function IdentityMintCreatingPage() {
   const router = useRouter();
-  const { connection } = useConnection();
   const wallet = useWallet();
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('Preparing...');
@@ -72,7 +71,6 @@ export default function IdentityMintCreatingPage() {
     const performMint = async () => {
       try {
         const mintResult = await mintBusinessIdentityNFT({
-          connection,
           wallet,
           businessName: business.name,
           logo: business.logo,
@@ -143,7 +141,7 @@ export default function IdentityMintCreatingPage() {
     };
 
     performMint();
-  }, [cancelled, connection, wallet, router, error]);
+  }, [cancelled, wallet, router, error]);
 
   const handleCancel = () => {
     setCancelled(true);
