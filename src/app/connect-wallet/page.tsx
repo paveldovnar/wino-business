@@ -16,7 +16,7 @@ type ConnectState = 'idle' | 'connecting' | 'connected' | 'routing' | 'error' | 
 
 export default function ConnectWalletPage() {
   const router = useRouter();
-  const { connect, connected, connecting, disconnect, select, wallets, publicKey } = useWallet();
+  const { connected, connecting, disconnect, wallets, publicKey } = useWallet();
   const [connectState, setConnectState] = useState<ConnectState>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const hasRoutedRef = useRef(false);
@@ -118,9 +118,10 @@ export default function ConnectWalletPage() {
         throw new Error('WalletConnect adapter not found');
       }
 
-      // Select and connect
-      select(walletConnectWallet.adapter.name);
-      await connect();
+      // Connect directly through the adapter to avoid race condition
+      // (select() updates React state async, so connect() would fail if called immediately)
+      console.log('[connect-wallet] Connecting via adapter directly...');
+      await walletConnectWallet.adapter.connect();
 
       console.log('[connect-wallet] connect() completed');
     } catch (err: any) {

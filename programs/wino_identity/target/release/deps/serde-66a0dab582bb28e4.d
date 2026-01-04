@@ -1,0 +1,14 @@
+/Users/dovnar/wino-business/programs/wino_identity/target/release/deps/libserde-66a0dab582bb28e4.rmeta: /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs /Users/dovnar/wino-business/programs/wino_identity/target/release/build/serde-1ecd9cc1e0b8524f/out/private.rs
+
+/Users/dovnar/wino-business/programs/wino_identity/target/release/deps/libserde-66a0dab582bb28e4.rlib: /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs /Users/dovnar/wino-business/programs/wino_identity/target/release/build/serde-1ecd9cc1e0b8524f/out/private.rs
+
+/Users/dovnar/wino-business/programs/wino_identity/target/release/deps/serde-66a0dab582bb28e4.d: /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs /Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs /Users/dovnar/wino-business/programs/wino_identity/target/release/build/serde-1ecd9cc1e0b8524f/out/private.rs
+
+/Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs:
+/Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs:
+/Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs:
+/Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs:
+/Users/dovnar/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs:
+/Users/dovnar/wino-business/programs/wino_identity/target/release/build/serde-1ecd9cc1e0b8524f/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/dovnar/wino-business/programs/wino_identity/target/release/build/serde-1ecd9cc1e0b8524f/out
