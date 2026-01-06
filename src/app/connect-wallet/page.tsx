@@ -16,7 +16,7 @@ type ConnectState = 'idle' | 'connecting' | 'connected' | 'routing' | 'error' | 
 
 export default function ConnectWalletPage() {
   const router = useRouter();
-  const { connected, connecting, disconnect, wallets, publicKey } = useWallet();
+  const { connected, connecting, disconnect, wallets, publicKey, select, connect, wallet } = useWallet();
   const [connectState, setConnectState] = useState<ConnectState>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [clickCount, setClickCount] = useState(0);
@@ -121,13 +121,14 @@ export default function ConnectWalletPage() {
       console.log('[connect-wallet] Starting connection...');
       console.log('[connect-wallet] Available wallets:', wallets.map(w => w.adapter.name));
       console.log('[connect-wallet] Current state:', { connected, connecting, publicKey: publicKey?.toBase58() });
+      console.log('[connect-wallet] Current wallet:', wallet?.adapter.name);
 
       setConnectState('connecting');
       setErrorMessage('');
 
-      // Find WalletConnect adapter
+      // Check if WalletConnect adapter exists
       const walletConnectWallet = wallets.find(
-        wallet => wallet.adapter.name === 'WalletConnect'
+        w => w.adapter.name === 'WalletConnect'
       );
 
       if (!walletConnectWallet) {
@@ -135,30 +136,29 @@ export default function ConnectWalletPage() {
         throw new Error('WalletConnect adapter not found. Please refresh the page.');
       }
 
-      const adapter = walletConnectWallet.adapter;
-      console.log('[connect-wallet] Adapter state:', {
-        name: adapter.name,
-        connected: adapter.connected,
-        connecting: adapter.connecting,
-        publicKey: adapter.publicKey?.toBase58(),
-      });
-
-      // If adapter is already connected, just update state
-      if (adapter.connected && adapter.publicKey) {
-        console.log('[connect-wallet] Adapter already connected, updating state');
+      // If already connected, just return
+      if (connected && publicKey) {
+        console.log('[connect-wallet] Already connected, skipping');
         return;
       }
 
-      // If adapter is already connecting, don't try again
-      if (adapter.connecting) {
-        console.log('[connect-wallet] Adapter already connecting, waiting...');
+      // If already connecting, don't try again
+      if (connecting) {
+        console.log('[connect-wallet] Already connecting, waiting...');
         return;
       }
 
-      // Connect directly through the adapter to avoid race condition
-      // (select() updates React state async, so connect() would fail if called immediately)
-      console.log('[connect-wallet] Connecting via adapter directly...');
-      await adapter.connect();
+      // Select WalletConnect and then connect
+      // The select() call is async (updates React state), so we need to connect after selection
+      console.log('[connect-wallet] Selecting WalletConnect...');
+      select(walletConnectWallet.adapter.name);
+
+      // Small delay to allow React state to update after select()
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Now connect - the wallet context should handle showing the modal
+      console.log('[connect-wallet] Calling connect()...');
+      await connect();
 
       console.log('[connect-wallet] connect() completed');
     } catch (err: any) {
@@ -350,6 +350,7 @@ export default function ConnectWalletPage() {
           <div>Connected: {String(connected)}</div>
           <div>Connecting: {String(connecting)}</div>
           <div>PublicKey: {publicKey ? publicKey.toBase58().slice(0, 8) + '...' : 'null'}</div>
+          <div>Selected: {wallet?.adapter.name || 'none'}</div>
           <div>Wallets: {wallets.length > 0 ? wallets.map(w => w.adapter.name).join(', ') : 'none'}</div>
           <div>HasRouted: {String(hasRoutedRef.current)}</div>
           <div><strong>Clicks: {clickCount}</strong></div>
