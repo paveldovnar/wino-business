@@ -23,6 +23,7 @@ export default function ConnectWalletPage() {
   const hasRoutedRef = useRef(false);
   const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const connectingStartRef = useRef<number | null>(null);
+  const isManuallyConnectingRef = useRef(false); // Track manual connection attempts
 
   // Clear timeout on unmount
   useEffect(() => {
@@ -98,9 +99,13 @@ export default function ConnectWalletPage() {
     } else if (connected && publicKey) {
       setConnectState('connected');
       setErrorMessage('');
+      isManuallyConnectingRef.current = false; // Clear manual flag on success
     } else if (!connected && !connecting && connectState !== 'idle' && connectState !== 'timeout' && connectState !== 'error') {
-      setConnectState('idle');
-      hasRoutedRef.current = false;
+      // Only reset to idle if we're not in a manual connection attempt
+      if (!isManuallyConnectingRef.current) {
+        setConnectState('idle');
+        hasRoutedRef.current = false;
+      }
     }
   }, [connecting, connected, publicKey, connectState]);
 
@@ -108,6 +113,9 @@ export default function ConnectWalletPage() {
     // Immediate feedback - increment click count to verify handler is called
     setClickCount(c => c + 1);
     console.log('!!! HANDLER CALLED !!!', clickCount + 1);
+
+    // Set manual connecting flag to prevent useEffect from resetting state
+    isManuallyConnectingRef.current = true;
 
     try {
       console.log('[connect-wallet] Starting connection...');
@@ -158,6 +166,7 @@ export default function ConnectWalletPage() {
       setErrorMessage(err?.message || 'Connection failed. Please try again.');
       setConnectState('error');
       hasRoutedRef.current = false;
+      isManuallyConnectingRef.current = false; // Clear manual flag on error
     }
   };
 
