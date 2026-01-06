@@ -233,7 +233,7 @@ export async function buildCreateIdentityTransaction(
 /**
  * Get the Solscan link for a transaction
  */
-export function getSolscanLink(signature: string, cluster: 'mainnet-beta' | 'devnet' = 'devnet'): string {
+export function getSolscanLink(signature: string, cluster: 'mainnet-beta' | 'devnet' = 'mainnet-beta'): string {
   const base = cluster === 'mainnet-beta'
     ? 'https://solscan.io/tx'
     : 'https://solscan.io/tx';
@@ -244,7 +244,7 @@ export function getSolscanLink(signature: string, cluster: 'mainnet-beta' | 'dev
 /**
  * Get Solscan link for an account
  */
-export function getSolscanAccountLink(address: string, cluster: 'mainnet-beta' | 'devnet' = 'devnet'): string {
+export function getSolscanAccountLink(address: string, cluster: 'mainnet-beta' | 'devnet' = 'mainnet-beta'): string {
   const suffix = cluster === 'devnet' ? '?cluster=devnet' : '';
   return `https://solscan.io/account/${address}${suffix}`;
 }

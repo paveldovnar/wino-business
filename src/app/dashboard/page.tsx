@@ -483,8 +483,8 @@ export default function DashboardPage() {
 
   const logoSrc = getLogoSrc();
 
-  // Get cluster for links
-  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'devnet') as 'devnet' | 'mainnet-beta';
+  // Get cluster for links (default to mainnet-beta)
+  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'mainnet-beta') as 'devnet' | 'mainnet-beta';
 
   return (
     <div className={styles.container}>

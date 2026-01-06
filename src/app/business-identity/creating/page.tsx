@@ -57,7 +57,7 @@ export default function BusinessIdentityCreatingPage() {
   const [identityPda, setIdentityPda] = useState<string | null>(null);
   const hasStarted = useRef(false);
 
-  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'devnet') as 'devnet' | 'mainnet-beta';
+  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'mainnet-beta') as 'devnet' | 'mainnet-beta';
 
   const createIdentity = useCallback(async () => {
     if (!publicKey || !signTransaction || !connection) {

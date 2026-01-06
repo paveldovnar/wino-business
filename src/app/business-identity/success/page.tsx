@@ -16,7 +16,7 @@ export default function BusinessIdentitySuccessPage() {
   const [identityPda, setIdentityPda] = useState('');
   const [txSignature, setTxSignature] = useState('');
 
-  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'devnet') as 'devnet' | 'mainnet-beta';
+  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'mainnet-beta') as 'devnet' | 'mainnet-beta';
 
   useEffect(() => {
     const name = sessionStorage.getItem('business_name');

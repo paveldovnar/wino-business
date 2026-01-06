@@ -103,12 +103,20 @@ function WalletPersistenceHandler({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+// USDC mainnet mint address
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
 export function WalletProvider({ children }: { children: ReactNode }) {
-  // Use devnet for identity PDA testing
-  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'devnet') as 'devnet' | 'mainnet-beta';
+  // Default to mainnet-beta (production)
+  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'mainnet-beta') as 'devnet' | 'mainnet-beta';
   const endpoint = useMemo(() => {
     const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
-    return rpcUrl || clusterApiUrl(cluster);
+    const finalEndpoint = rpcUrl || clusterApiUrl(cluster);
+
+    // Log network configuration at startup
+    console.log(`[network] Using ${cluster} RPC=${finalEndpoint.slice(0, 50)}... USDC=${USDC_MINT}`);
+
+    return finalEndpoint;
   }, [cluster]);
 
   // Configure WalletConnect adapter with project ID
