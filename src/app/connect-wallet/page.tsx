@@ -19,6 +19,7 @@ export default function ConnectWalletPage() {
   const { connected, connecting, disconnect, wallets, publicKey } = useWallet();
   const [connectState, setConnectState] = useState<ConnectState>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [clickCount, setClickCount] = useState(0);
   const hasRoutedRef = useRef(false);
   const connectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const connectingStartRef = useRef<number | null>(null);
@@ -104,6 +105,10 @@ export default function ConnectWalletPage() {
   }, [connecting, connected, publicKey, connectState]);
 
   const handleConnectWallet = async () => {
+    // Immediate feedback - increment click count to verify handler is called
+    setClickCount(c => c + 1);
+    console.log('!!! HANDLER CALLED !!!', clickCount + 1);
+
     try {
       console.log('[connect-wallet] Starting connection...');
       console.log('[connect-wallet] Available wallets:', wallets.map(w => w.adapter.name));
@@ -338,6 +343,7 @@ export default function ConnectWalletPage() {
           <div>PublicKey: {publicKey ? publicKey.toBase58().slice(0, 8) + '...' : 'null'}</div>
           <div>Wallets: {wallets.length > 0 ? wallets.map(w => w.adapter.name).join(', ') : 'none'}</div>
           <div>HasRouted: {String(hasRoutedRef.current)}</div>
+          <div><strong>Clicks: {clickCount}</strong></div>
         </div>
       </div>
     </div>
