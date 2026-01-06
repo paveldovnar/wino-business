@@ -106,6 +106,9 @@ export default function ConnectWalletPage() {
   const handleConnectWallet = async () => {
     try {
       console.log('[connect-wallet] Starting connection...');
+      console.log('[connect-wallet] Available wallets:', wallets.map(w => w.adapter.name));
+      console.log('[connect-wallet] Current state:', { connected, connecting, publicKey: publicKey?.toBase58() });
+
       setConnectState('connecting');
       setErrorMessage('');
 
@@ -115,13 +118,34 @@ export default function ConnectWalletPage() {
       );
 
       if (!walletConnectWallet) {
-        throw new Error('WalletConnect adapter not found');
+        console.error('[connect-wallet] No WalletConnect adapter found in:', wallets);
+        throw new Error('WalletConnect adapter not found. Please refresh the page.');
+      }
+
+      const adapter = walletConnectWallet.adapter;
+      console.log('[connect-wallet] Adapter state:', {
+        name: adapter.name,
+        connected: adapter.connected,
+        connecting: adapter.connecting,
+        publicKey: adapter.publicKey?.toBase58(),
+      });
+
+      // If adapter is already connected, just update state
+      if (adapter.connected && adapter.publicKey) {
+        console.log('[connect-wallet] Adapter already connected, updating state');
+        return;
+      }
+
+      // If adapter is already connecting, don't try again
+      if (adapter.connecting) {
+        console.log('[connect-wallet] Adapter already connecting, waiting...');
+        return;
       }
 
       // Connect directly through the adapter to avoid race condition
       // (select() updates React state async, so connect() would fail if called immediately)
       console.log('[connect-wallet] Connecting via adapter directly...');
-      await walletConnectWallet.adapter.connect();
+      await adapter.connect();
 
       console.log('[connect-wallet] connect() completed');
     } catch (err: any) {
@@ -305,17 +329,16 @@ export default function ConnectWalletPage() {
           </div>
         </div>
 
-        {/* Debug info - always show in dev */}
-        {process.env.NODE_ENV === 'development' && (
-          <div style={{ marginTop: '24px', padding: '12px', background: 'rgba(0,0,0,0.1)', borderRadius: '8px', fontSize: '12px' }}>
-            <div><strong>Debug Info:</strong></div>
-            <div>State: {connectState}</div>
-            <div>Connected: {String(connected)}</div>
-            <div>Connecting: {String(connecting)}</div>
-            <div>PublicKey: {publicKey ? 'Yes' : 'No'}</div>
-            <div>HasRouted: {String(hasRoutedRef.current)}</div>
-          </div>
-        )}
+        {/* Debug info - always show for troubleshooting */}
+        <div style={{ marginTop: '24px', padding: '12px', background: 'rgba(0,0,0,0.1)', borderRadius: '8px', fontSize: '12px' }}>
+          <div><strong>Debug Info:</strong></div>
+          <div>State: {connectState}</div>
+          <div>Connected: {String(connected)}</div>
+          <div>Connecting: {String(connecting)}</div>
+          <div>PublicKey: {publicKey ? publicKey.toBase58().slice(0, 8) + '...' : 'null'}</div>
+          <div>Wallets: {wallets.length > 0 ? wallets.map(w => w.adapter.name).join(', ') : 'none'}</div>
+          <div>HasRouted: {String(hasRoutedRef.current)}</div>
+        </div>
       </div>
     </div>
   );
