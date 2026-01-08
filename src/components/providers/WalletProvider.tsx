@@ -3,8 +3,8 @@
 import { ReactNode, useMemo, useCallback, useEffect, useState, useRef, createContext, useContext } from 'react';
 import { ConnectionProvider, WalletProvider as SolanaWalletProvider, useWallet } from '@solana/wallet-adapter-react';
 import { WalletConnectWalletAdapter } from '@solana/wallet-adapter-walletconnect';
-import { clusterApiUrl } from '@solana/web3.js';
 import { saveWalletState, getWalletState, clearWalletState, shouldExpectReconnect, fullWalletLogout } from '@/lib/wallet-persistence';
+import { getClusterConfig, type SolanaCluster, SOLANA_CHAIN_IDS } from '@/lib/solana/cluster';
 
 // Timeout for wallet session restoration (10 seconds)
 const SESSION_RESTORE_TIMEOUT_MS = 10000;
@@ -131,9 +131,6 @@ function WalletPersistenceHandler({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-// USDC mainnet mint address
-const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-
 // Fallback projectId if env var not set (the original hardcoded one)
 const FALLBACK_PROJECT_ID = 'bf22e397164491caa066ada6d64c6756';
 
@@ -167,31 +164,35 @@ function getMetadataUrl(): string {
 }
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  // Default to mainnet-beta (production)
-  const cluster = (process.env.NEXT_PUBLIC_SOLANA_CLUSTER || 'mainnet-beta') as 'devnet' | 'mainnet-beta';
+  // Get cluster configuration from central config
+  const clusterConfig = getClusterConfig();
+  const { cluster, rpcUrl, chainId, usdcMint } = clusterConfig;
 
   // Get projectId from env var with fallback
   const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || FALLBACK_PROJECT_ID;
   const projectIdMissing = !process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
 
-  // Log warning if using fallback
+  // Log configuration at startup
   useEffect(() => {
+    console.log('[WalletProvider] Configuration:', {
+      cluster,
+      chainId, // CAIP-2 format
+      rpcUrl: rpcUrl.slice(0, 50) + '...',
+      usdcMint,
+      projectIdMissing,
+    });
+
     if (projectIdMissing) {
       console.warn('[WalletProvider] NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID not set, using fallback projectId');
     }
-  }, [projectIdMissing]);
+  }, [cluster, chainId, rpcUrl, usdcMint, projectIdMissing]);
 
   const endpoint = useMemo(() => {
-    const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL;
-    const finalEndpoint = rpcUrl || clusterApiUrl(cluster);
-
-    // Log network configuration at startup
-    console.log(`[network] Using ${cluster} RPC=${finalEndpoint.slice(0, 50)}... USDC=${USDC_MINT}`);
-
-    return finalEndpoint;
-  }, [cluster]);
+    return rpcUrl;
+  }, [rpcUrl]);
 
   // Configure WalletConnect adapter with project ID from env
+  // CRITICAL: Use CAIP-2 chain ID format, not cluster name!
   const wallets = useMemo(
     () => {
       const metadataUrl = getMetadataUrl();
@@ -200,13 +201,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       console.log('[WalletProvider] Creating WalletConnect adapter:', {
         projectId: projectId.slice(0, 8) + '...',
         cluster,
+        chainId, // CAIP-2 format: solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp
         metadataUrl,
         inTelegram,
       });
 
       return [
         new WalletConnectWalletAdapter({
-          network: cluster as any,
+          // Use CAIP-2 chain ID format for WalletConnect v2
+          // Mainnet: solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp
+          // Devnet: solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1
+          network: chainId as any,
           options: {
             projectId,
             metadata: {
@@ -219,7 +224,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         }),
       ];
     },
-    [cluster, projectId]
+    [chainId, projectId]
   );
 
   // Error handler for wallet errors

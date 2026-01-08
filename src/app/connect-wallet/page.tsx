@@ -8,6 +8,7 @@ import { Button } from '@telegram-apps/telegram-ui';
 import { Wallet, ArrowLeft, LogOut, RefreshCw, AlertCircle, ExternalLink } from 'lucide-react';
 import { getBusiness } from '@/lib/storage';
 import { fullWalletLogout } from '@/lib/wallet-persistence';
+import { getClusterConfig } from '@/lib/solana/cluster';
 import styles from './connect-wallet.module.css';
 
 /**
@@ -146,7 +147,11 @@ export default function ConnectWalletPage() {
   }, [connecting, connected, connectState]);
 
   const handleConnectWallet = async () => {
-    console.log('[connect-wallet] Connect button clicked');
+    const config = getClusterConfig();
+    console.log('[connect-wallet] Connect button clicked', {
+      cluster: config.cluster,
+      chainId: config.chainId,
+    });
 
     // If already connected, just route
     if (connected && publicKey) {
@@ -181,7 +186,10 @@ export default function ConnectWalletPage() {
         throw new Error('WalletConnect adapter not found. Please refresh the page.');
       }
 
-      console.log('[connect-wallet] Selecting WalletConnect adapter');
+      console.log('[connect-wallet] Selecting WalletConnect adapter', {
+        adapterName: walletConnectWallet.adapter.name,
+        availableAdapters: wallets.map(w => w.adapter.name),
+      });
       select(walletConnectWallet.adapter.name);
 
       // Brief delay for React state to update after select()
@@ -191,7 +199,11 @@ export default function ConnectWalletPage() {
       console.log('[connect-wallet] Calling connect()...');
       await connect();
 
-      console.log('[connect-wallet] connect() returned');
+      // Log if connect() returned (session established or modal closed)
+      console.log('[connect-wallet] connect() returned', {
+        connected,
+        publicKey: publicKey?.toBase58()?.slice(0, 8) || 'null',
+      });
       // Note: We don't set connected state here - the useEffect above handles that
       // based on the actual wallet adapter state
 
@@ -206,6 +218,7 @@ export default function ConnectWalletPage() {
 
       // User rejected or closed modal
       if (err?.message?.includes('rejected') || err?.message?.includes('User rejected') || err?.message?.includes('closed')) {
+        console.log('[connect-wallet] User rejected/closed modal');
         setConnectState('idle');
         setErrorMessage('');
         return;
@@ -487,6 +500,11 @@ export default function ConnectWalletPage() {
           <div>wallet: {wallet?.adapter.name || 'none'}</div>
           <div>adapters: {wallets.map(w => w.adapter.name).join(', ') || 'none'}</div>
           <div>inTelegram: {String(inTelegram)}</div>
+          <div style={{ marginTop: '4px', borderTop: '1px solid rgba(0,0,0,0.1)', paddingTop: '4px' }}>
+            <strong>Network:</strong>
+          </div>
+          <div>cluster: {getClusterConfig().cluster}</div>
+          <div>chainId: {getClusterConfig().chainId}</div>
         </div>
       </div>
     </div>
